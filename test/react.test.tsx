@@ -164,3 +164,58 @@ describe('<CabalSpyTheses />', () => {
     expect(setAccessToken).toHaveBeenLastCalledWith(null);
   });
 });
+
+describe('<CabalSpyTheses /> design props', () => {
+  it('maps clientId and every design prop to data-*', async () => {
+    await act(async () => {
+      root.render(
+        <CabalSpyTheses
+          chain="base"
+          mint="0xabc"
+          clientId="csid_app"
+          scope="instance"
+          sort="top"
+          font="Inter"
+          radius={8}
+          bg="#000"
+          card="#111"
+          text="#fff"
+          muted="#999"
+          border="#222"
+          accent="#3ddc84"
+          accentText="#04210f"
+          bull="#0f0"
+          bear="#f00"
+          showHeader={false}
+          showSentiment
+          compact
+          height={400}
+        />,
+      );
+    });
+    const el = container.querySelector('[data-csid-thesis]') as HTMLElement;
+    expect({ ...el.dataset }).toEqual({
+      csidThesis: '',
+      chain: 'base',
+      mint: '0xabc',
+      clientId: 'csid_app',
+      scope: 'instance',
+      sort: 'top',
+      font: 'Inter',
+      radius: '8',
+      bg: '#000',
+      card: '#111',
+      text: '#fff',
+      muted: '#999',
+      border: '#222',
+      accent: '#3ddc84',
+      accentText: '#04210f',
+      bull: '#0f0',
+      bear: '#f00',
+      showHeader: 'false',
+      showSentiment: 'true',
+      compact: 'true',
+      height: '400',
+    });
+  });
+});

@@ -35,11 +35,18 @@ const stream = csid.stream({ events: ['theses'], blockchain: 'solana', mint });
 stream.on('thesis', (t) => console.log('new thesis', t.body)).on('thesis.reply', (r) => console.log('reply', r.body));
 await stream.connect().catch((e) => console.log('stream:', e.code));
 
+// ... or the theses stream (every plan), for many tokens at once
+const ts = csid.thesesStream();
+ts.on('thesis', (t) => console.log('[theses stream]', t.blockchain, t.mint, t.body));
+await ts.connect().catch((e) => console.log('theses stream:', e.code));
+ts.subscribe([{ blockchain: 'solana', mint }]);
+
 // ... or the public per-token socket (no key, also in browsers)
 const live = new ThesisClient().live('solana', mint);
 live.on('thesis', (t) => console.log('[public] new thesis', t.body));
 await live.connect();
 process.on('SIGINT', () => {
   stream.close();
+  ts.close();
   live.close();
 });

@@ -40,7 +40,17 @@ import { USER_AGENT } from './util';
 export const DEFAULT_THESIS_URL = 'https://id.cabalspy.xyz/thesis/v1';
 export const DEFAULT_THESIS_WS_URL = 'wss://id.cabalspy.xyz/thesis/v1/ws';
 
-export interface ThesisClientOptions {
+export interface ThesisScopeOptions {
+  /**
+   * `global` (default): theses written on every platform. `instance`: only the
+   * ones written on the instance named by `clientId`.
+   */
+  scope?: 'global' | 'instance';
+  /** Your instance's client_id. Needed for `scope: 'instance'`; also credits posts to your app. */
+  clientId?: string;
+}
+
+export interface ThesisClientOptions extends ThesisScopeOptions {
   /** The signed-in user's access token (scope `thesis`). Needed only for writing. */
   accessToken?: string | null;
   /** Default: https://id.cabalspy.xyz/thesis/v1 */
@@ -64,7 +74,7 @@ export interface ThesisPage {
   pagination: Pagination;
 }
 
-export interface TokenThesesOptions {
+export interface TokenThesesOptions extends ThesisScopeOptions {
   sort?: ThesisSort;
   stance?: ThesisStance;
   /** 1-50. Default: 20 */
@@ -90,6 +100,22 @@ function assertChain(chain: string): void {
 
 const enc = encodeURIComponent;
 
+/** Query parameters for a scope; instance scope needs the client_id. */
+function scopeQuery(scope: string | undefined, clientId: string | undefined): Record<string, string | undefined> {
+  if (scope === undefined || scope === 'global') return scope ? { scope } : {};
+  if (scope !== 'instance') {
+    throw new BadRequestError(`Invalid value for 'scope': ${scope}`, {
+      code: 'invalid_parameter',
+      parameter: 'scope',
+      allowed: ['global', 'instance'],
+    });
+  }
+  if (!clientId) {
+    throw new BadRequestError('scope=instance needs clientId', { code: 'missing_parameter', parameter: 'clientId' });
+  }
+  return { scope, client_id: clientId };
+}
+
 /**
  * Client for the public thesis API, e.g. in a browser app that builds its own
  * thesis UI.
@@ -105,6 +131,8 @@ export class ThesisClient {
   readonly baseUrl: string;
   readonly wsUrl: string;
   readonly timeout: number;
+  readonly scope?: 'global' | 'instance';
+  readonly clientId?: string;
   private accessToken: string | null;
   private readonly fetchImpl: typeof globalThis.fetch;
 
@@ -113,6 +141,9 @@ export class ThesisClient {
     this.baseUrl = (options.baseUrl ?? DEFAULT_THESIS_URL).replace(/\/+$/, '');
     this.wsUrl = (options.wsUrl ?? DEFAULT_THESIS_WS_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 15_000;
+    this.scope = options.scope;
+    this.clientId = options.clientId;
+    scopeQuery(this.scope, this.clientId);
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -191,7 +222,13 @@ export class ThesisClient {
   async list(chain: Chain, mint: string, opts: TokenThesesOptions = {}): Promise<TokenThesesPage> {
     const { data, extra } = await this.call<Thesis[]>('GET', this.tokenPath(chain, mint), {
       auth: 'optional',
-      query: { sort: opts.sort, stance: opts.stance, limit: opts.limit, cursor: opts.cursor },
+      query: {
+        sort: opts.sort,
+        stance: opts.stance,
+        limit: opts.limit,
+        cursor: opts.cursor,
+        ...scopeQuery(opts.scope ?? this.scope, opts.clientId ?? this.clientId),
+      },
     });
     return {
       items: data,
@@ -213,8 +250,9 @@ export class ThesisClient {
   }
 
   /** Counts (theses, bull, bear, authors) and token info. */
-  async summary(chain: Chain, mint: string): Promise<ThesisSummary> {
-    return (await this.call<ThesisSummary>('GET', `${this.tokenPath(chain, mint)}/summary`)).data;
+  async summary(chain: Chain, mint: string, opts: ThesisScopeOptions = {}): Promise<ThesisSummary> {
+    const query = scopeQuery(opts.scope ?? this.scope, opts.clientId ?? this.clientId);
+    return (await this.call<ThesisSummary>('GET', `${this.tokenPath(chain, mint)}/summary`, { query })).data;
   }
 
   /** One thesis or reply. */
@@ -246,12 +284,14 @@ export class ThesisClient {
     if (params.stance && params.stance !== 'bull' && params.stance !== 'bear') {
       throw new BadRequestError('stance must be bull or bear', { code: 'invalid_parameter', parameter: 'stance', allowed: ['bull', 'bear'] });
     }
-    return (await this.call<Thesis>('POST', this.tokenPath(chain, mint), { auth: 'required', body: params })).data;
+    const body = { ...params, ...(this.clientId ? { client_id: this.clientId } : {}) };
+    return (await this.call<Thesis>('POST', this.tokenPath(chain, mint), { auth: 'required', body })).data;
   }
 
   /** Replies to a thesis. Any signed-in user may reply. */
   async reply(id: string, body: string): Promise<Thesis> {
-    return (await this.call<Thesis>('POST', `/items/${enc(id)}/replies`, { auth: 'required', body: { body } })).data;
+    const payload = { body, ...(this.clientId ? { client_id: this.clientId } : {}) };
+    return (await this.call<Thesis>('POST', `/items/${enc(id)}/replies`, { auth: 'required', body: payload })).data;
   }
 
   /** Adds (or with on=false removes) a reaction. */
@@ -277,10 +317,15 @@ export class ThesisClient {
 
   // ── live ──────────────────────────────────────────────────────────────────
 
-  /** Live updates for one token: thesis, reply, reaction, removed. */
-  live(chain: Chain, mint: string, options: ThesisLiveOptions = {}): ThesisLive {
+  /**
+   * Live updates for one token: thesis, reply, reaction, removed. With
+   * `scope: 'instance'` (and `clientId`) only theses written on that instance.
+   */
+  live(chain: Chain, mint: string, options: ThesisLiveOptions & ThesisScopeOptions = {}): ThesisLive {
     this.tokenPath(chain, mint);
-    return new ThesisLive(`${this.wsUrl}/${enc(chain)}/${enc(mint)}`, options);
+    const sp = new URLSearchParams(scopeQuery(options.scope ?? this.scope, options.clientId ?? this.clientId) as Record<string, string>);
+    const qs = sp.toString();
+    return new ThesisLive(`${this.wsUrl}/${enc(chain)}/${enc(mint)}${qs ? `?${qs}` : ''}`, options);
   }
 }
 

@@ -212,16 +212,20 @@ A thesis is a short opinion on a token (up to 1000 characters), optionally tagge
 
 Writing needs the scope **`thesis`** in your login (`scope: ['openid', 'profile', 'thesis']`).
 
+**Scope of reads.** Theses are shared across platforms. Every read (Data API `listTheses`, `thesisSummary`, `latestTheses`; `ThesisClient`; the widget; the live sockets) takes `scope`: `global` (default, every platform) or `instance` (only theses written on your instance). In the Data API your key decides the instance; the public API and widget need your `clientId`.
+
 ### Widget
 
 ```tsx
 import { CabalSpyTheses, useCabalSpyID } from 'cabalspy-id/react';
 
 const { accessToken } = useCabalSpyID({ clientId: 'csid_...' });
-<CabalSpyTheses chain="solana" mint={mint} theme="dark" height={520} accessToken={accessToken} />
+<CabalSpyTheses chain="solana" mint={mint} clientId="csid_..." theme="dark" accessToken={accessToken} />
 ```
 
-Plain HTML: `<div data-csid-thesis data-chain="solana" data-mint="..." data-theme="dark"></div>` with `widget.js`; `CSID.thesis.setAccessToken(token)` lets the signed-in person write without signing in again inside the widget (after a browser login through the widget this happens automatically).
+With `clientId` the widget loads the design saved in the dashboard and credits posts to your app. Every design setting can be overridden by a prop (mapped to the widget's `data-*` attribute): `theme`, `scope`, `sort`, `font`, `radius`, `bg`, `card`, `text`, `muted`, `border`, `accent`, `accentText`, `bull`, `bear`, `showHeader`, `showSentiment`, `compact`, `height`.
+
+Plain HTML: `<div data-csid-thesis data-chain="solana" data-mint="..." data-client-id="csid_..." data-theme="dark"></div>` with `widget.js`; `CSID.thesis.setAccessToken(token)` lets the signed-in person write without signing in again inside the widget (after a browser login through the widget this happens automatically).
 
 ### Your own UI in the browser: `ThesisClient`
 
@@ -230,7 +234,8 @@ The public thesis API (`https://id.cabalspy.xyz/thesis/v1`) needs no API key. Re
 ```ts
 import { ThesisClient } from 'cabalspy-id';
 
-const theses = new ThesisClient({ accessToken }); // from csid:login / useCabalSpyID()
+const theses = new ThesisClient({ accessToken, clientId: 'csid_...' }); // token from csid:login / useCabalSpyID()
+// add scope: 'instance' to show only theses written on your platform
 
 const { items, token, summary } = await theses.list('solana', mint, { sort: 'top' });
 const me = await theses.me('solana', mint);       // { can_post, can_reply, holder, paused, user }
@@ -238,7 +243,7 @@ if (me.can_post) await theses.post('solana', mint, { body: 'Strong community, st
 await theses.reply(items[0].id, 'Agree, chart looks good');
 await theses.react(items[0].id, '🚀');
 
-const live = theses.live('solana', mint);         // public websocket for one token
+const live = theses.live('solana', mint);         // public websocket for one token (also takes { scope, clientId })
 live.on('thesis', (t) => prepend(t)).on('reply', addReply).on('reaction', updateCounts).on('removed', ({ id }) => drop(id));
 await live.connect();
 ```
@@ -276,7 +281,25 @@ if (can_post) {
 
 Thesis error codes: `not_a_holder`, `consent_required`, `scope_missing`, `plan_user_limit` (`PlanUserLimitError`), `posting_paused`, `sandbox_user` (403, `PermissionError`); `invalid_body`, `duplicate` (400); `not_found` (404); `rate_limited` (429). Writes are never retried after a server or network error, so a post can't be duplicated; only the API's own rate limit is retried.
 
-Live over the stream: `csid.stream({ events: ['theses'], blockchain: 'solana', mint })` emits `thesis`, `thesis.reply`, `thesis.reaction` and `thesis.removed` (or iterate `stream.theses()`). New theses of your users also arrive as the webhook `thesis.created` (`event.data.thesis`).
+### Theses stream (every plan)
+
+Live theses for the tokens you choose, e.g. to put markers on a chart. Up to 200 tokens per connection (or all), available on every plan; subscriptions are sent again after every reconnect.
+
+```ts
+const ts = csid.thesesStream({ scope: 'global' });  // or 'instance'
+ts.on('thesis', (t) => addMarker(t.blockchain, t.mint, t));
+ts.on('thesis.removed', ({ id }) => removeMarker(id));
+await ts.connect();                                  // resolves on `ready`
+ts.subscribe([{ blockchain: 'solana', mint: MINT_A }, { blockchain: 'base', mint: TOKEN_B }]);
+ts.unsubscribe([{ blockchain: 'base', mint: TOKEN_B }]);
+// ts.subscribeAll() / ts.unsubscribeAll()
+
+for await (const { event, data } of csid.thesesStream()) { … }  // or iterate
+```
+
+Events: `ready`, `subscribed`, `thesis`, `thesis.reply`, `thesis.reaction`, `thesis.removed`, `heartbeat`, `reconnecting`, `close`, `error`. A refused connection (`invalid_api_key`, …) is fatal; a bad frame (`too_many_tokens`, an invalid address) is reported as `error` and the connection stays.
+
+Also over the trade stream (Pro plan): `csid.stream({ events: ['theses'], blockchain: 'solana', mint })` emits `thesis`, `thesis.reply`, `thesis.reaction` and `thesis.removed` (or iterate `stream.theses()`). New theses of your users also arrive as the webhook `thesis.created` (`event.data.thesis`).
 
 ## Live stream
 

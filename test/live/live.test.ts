@@ -116,3 +116,20 @@ describe('live: theses', () => {
     live.close();
   });
 });
+
+describe('live: theses stream and scope', () => {
+  it('the theses stream refuses an invalid key', async () => {
+    if (typeof (globalThis as { WebSocket?: unknown }).WebSocket !== 'function') return; // Node < 22
+    const ts = new CabalSpyID({ apiKey: 'csid_api_not_a_real_key' }).thesesStream({ reconnect: false });
+    const err = await ts.connect().catch((e: unknown) => e);
+    ts.close();
+    // Refused either in the stream (invalid_api_key) or, while the proxy does not
+    // upgrade this path, already at the HTTP handshake (ws_error).
+    expect(['invalid_api_key', 'ws_error', 'ws_closed_early']).toContain((err as { code?: string }).code);
+  });
+
+  it('public reads accept scope=global', async () => {
+    const s = await new ThesisClient({ scope: 'global' }).summary('solana', WSOL);
+    expect(typeof s.theses).toBe('number');
+  });
+});

@@ -4,6 +4,19 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-13
+
+### Added
+
+- `scope` (`global` | `instance`) on `listTheses`, `iterTheses`, `thesisSummary` and `latestTheses`.
+- `ThesesStream` (`csid.thesesStream()`) for `wss://api-id.cabalspy.xyz/v1/theses/stream` (every plan):
+  `subscribe` / `unsubscribe` up to 200 tokens, `subscribeAll` / `unsubscribeAll`, subscriptions
+  restored after reconnects, heartbeat watchdog, events and async iteration.
+- `ThesisClient`: `scope` and `clientId` options (reads, `live()`, and post attribution).
+- React `<CabalSpyTheses>`: `clientId` and every design prop (`scope`, `sort`, `font`, `radius`,
+  `bg`, `card`, `text`, `muted`, `border`, `accent`, `accentText`, `bull`, `bear`, `showHeader`,
+  `showSentiment`, `compact`, `height`).
+
 ## [0.2.0] - 2026-10-13
 
 ### Added
@@ -43,5 +56,6 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.3.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/CabalSpy/cabalspy-id-js/releases/tag/v0.1.0

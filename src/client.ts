@@ -20,6 +20,7 @@ import {
   isRetryable,
 } from './errors';
 import { CabalSpyIDStream, type StreamOptions } from './stream';
+import { ThesesStream, type ThesesStreamOptions } from './thesesStream';
 import {
   type ApiResponse,
   CHAINS,
@@ -57,6 +58,7 @@ import { USER_AGENT, env, sleep } from './util';
 
 export const DEFAULT_BASE_URL = 'https://api-id.cabalspy.xyz/v1';
 export const DEFAULT_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/stream';
+export const DEFAULT_THESES_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/theses/stream';
 
 export interface CabalSpyIDOptions {
   /**
@@ -73,6 +75,8 @@ export interface CabalSpyIDOptions {
   baseUrl?: string;
   /** Stream URL. Falls back to CABALSPY_ID_STREAM_URL, then the default. */
   streamUrl?: string;
+  /** Theses stream URL. Default: wss://api-id.cabalspy.xyz/v1/theses/stream */
+  thesesStreamUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30_000 */
   timeout?: number;
   /** Retries on 429, 5xx and network errors. Default: 2 */
@@ -158,7 +162,15 @@ export interface ThesisTokenParams {
   mint: string;
 }
 
-export interface ListThesesParams extends ThesisTokenParams {
+/**
+ * `global` (default): theses written on every platform. `instance`: only the
+ * ones written on your instance (your apps). Same for every plan.
+ */
+export interface ThesisScopeParam {
+  scope?: Scope;
+}
+
+export interface ListThesesParams extends ThesisTokenParams, ThesisScopeParam {
   /** Default: new */
   sort?: ThesisSort;
   stance?: ThesisStance;
@@ -178,7 +190,7 @@ export interface ThesisRepliesParams {
   csid_id?: string;
 }
 
-export interface LatestThesesParams {
+export interface LatestThesesParams extends ThesisScopeParam {
   /** Omit for every chain. */
   blockchain?: Chain;
   /** `instance`: only theses of your instance's users. Default: all */
@@ -301,6 +313,7 @@ function assertWallet(p: { blockchain?: string; address?: string }): void {
 export class CabalSpyID {
   readonly baseUrl: string;
   readonly streamUrl: string;
+  readonly thesesStreamUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
   readonly instance?: string;
@@ -317,6 +330,7 @@ export class CabalSpyID {
     this.instance = options.instance ?? (env('CABALSPY_ID_INSTANCE') || undefined);
     this.baseUrl = (options.baseUrl ?? (env('CABALSPY_ID_BASE_URL') || DEFAULT_BASE_URL)).replace(/\/+$/, '');
     this.streamUrl = (options.streamUrl ?? (env('CABALSPY_ID_STREAM_URL') || DEFAULT_STREAM_URL)).replace(/\/+$/, '');
+    this.thesesStreamUrl = (options.thesesStreamUrl ?? DEFAULT_THESES_STREAM_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.extraHeaders = options.headers ?? {};
@@ -613,6 +627,7 @@ export class CabalSpyID {
     assertToken(params);
     assertOneOf(params.sort, ['new', 'top'], 'sort');
     assertOneOf(params.stance, ['bull', 'bear'], 'stance');
+    assertOneOf(params.scope, ['global', 'instance'], 'scope');
     return this.getRaw<Thesis[]>('/theses', { ...params });
   }
 
@@ -624,9 +639,10 @@ export class CabalSpyID {
   }
 
   /** GET /v1/theses/summary — counts (theses, bull, bear, authors) and token info. */
-  async thesisSummary(params: ThesisTokenParams): Promise<ThesisSummary> {
+  async thesisSummary(params: ThesisTokenParams & ThesisScopeParam): Promise<ThesisSummary> {
     assertToken(params);
-    return this.get<ThesisSummary>('/theses/summary', { blockchain: params.blockchain, mint: params.mint });
+    assertOneOf(params.scope, ['global', 'instance'], 'scope');
+    return this.get<ThesisSummary>('/theses/summary', { blockchain: params.blockchain, mint: params.mint, scope: params.scope });
   }
 
   /** GET /v1/theses/item — one thesis or reply. */
@@ -660,6 +676,7 @@ export class CabalSpyID {
   async latestThesesRaw(params: LatestThesesParams = {}): Promise<Envelope<Thesis[]>> {
     assertOneOf(params.blockchain, CHAINS, 'blockchain');
     assertOneOf(params.users, ['all', 'instance'], 'users');
+    assertOneOf(params.scope, ['global', 'instance'], 'scope');
     return this.getRaw<Thesis[]>('/theses/latest', { ...params });
   }
 
@@ -746,6 +763,21 @@ export class CabalSpyID {
       throw new AuthenticationError('The stream needs an API key.', { status: 401, code: 'missing_api_key' });
     }
     return new CabalSpyIDStream(this.streamUrl, this.apiKey, { instance: this.instance, ...options });
+  }
+
+  /**
+   * Live theses for the tokens you subscribe to (every plan), e.g. for a chart.
+   *
+   *   const ts = csid.thesesStream();
+   *   ts.on('thesis', (t) => addMarker(t));
+   *   await ts.connect();
+   *   ts.subscribe([{ blockchain: 'solana', mint }]);
+   */
+  thesesStream(options: ThesesStreamOptions = {}): ThesesStream {
+    if (!this.apiKey) {
+      throw new AuthenticationError('The theses stream needs an API key.', { status: 401, code: 'missing_api_key' });
+    }
+    return new ThesesStream(this.thesesStreamUrl, this.apiKey, { instance: this.instance, ...options });
   }
 }
 

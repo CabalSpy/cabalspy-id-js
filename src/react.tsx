@@ -238,12 +238,39 @@ export interface CabalSpyThesesProps {
   chain: Chain;
   /** Token mint / contract address. */
   mint: string;
+  /**
+   * Your instance's client_id: loads the design saved in the dashboard (the
+   * props below override it), credits posts to your app and enables `scope="instance"`.
+   */
+  clientId?: string;
   /** Default: dark */
   theme?: 'dark' | 'light';
-  /** Initial height in px; the widget then sizes itself to its content. Default: 520 */
-  height?: number;
+  /** `global` (default): theses from every platform. `instance`: only the ones written on your instance (needs clientId). */
+  scope?: 'global' | 'instance';
+  /** Initial order. Default: new */
+  sort?: 'new' | 'top';
+  /** Font family, e.g. "Inter". */
+  font?: string;
   /** Corner radius in px. Default: 12 */
   radius?: number;
+  /** Colors (CSS colors, e.g. "#0d0f12"). */
+  bg?: string;
+  card?: string;
+  text?: string;
+  muted?: string;
+  border?: string;
+  accent?: string;
+  accentText?: string;
+  bull?: string;
+  bear?: string;
+  /** Show the token header. Default: true */
+  showHeader?: boolean;
+  /** Show the bull/bear sentiment bar. */
+  showSentiment?: boolean;
+  /** Denser layout. Default: false */
+  compact?: boolean;
+  /** Initial height in px; the widget then sizes itself to its content. Default: 520 */
+  height?: number;
   /**
    * The signed-in user's CabalSpy ID access token (scope `thesis`), so they
    * write without signing in again inside the widget. After a browser login
@@ -263,7 +290,32 @@ export interface CabalSpyThesesProps {
  *   <CabalSpyTheses chain="solana" mint={mint} theme="dark" accessToken={accessToken} />
  */
 export function CabalSpyTheses(props: CabalSpyThesesProps) {
-  const { chain, mint, theme, height, radius, accessToken, scriptSrc } = props;
+  const { accessToken, scriptSrc } = props;
+  const attrs: Record<string, string | undefined> = {
+    'data-csid-thesis': '',
+    'data-chain': props.chain,
+    'data-mint': props.mint,
+    'data-client-id': props.clientId,
+    'data-theme': props.theme,
+    'data-scope': props.scope,
+    'data-sort': props.sort,
+    'data-font': props.font,
+    'data-radius': props.radius === undefined ? undefined : String(props.radius),
+    'data-bg': props.bg,
+    'data-card': props.card,
+    'data-text': props.text,
+    'data-muted': props.muted,
+    'data-border': props.border,
+    'data-accent': props.accent,
+    'data-accent-text': props.accentText,
+    'data-bull': props.bull,
+    'data-bear': props.bear,
+    'data-show-header': bool(props.showHeader),
+    'data-show-sentiment': bool(props.showSentiment),
+    'data-compact': bool(props.compact),
+    'data-height': props.height === undefined ? undefined : String(props.height),
+  };
+  const key = JSON.stringify(attrs);
 
   useEffect(() => {
     if (!isBrowser()) return;
@@ -277,7 +329,7 @@ export function CabalSpyTheses(props: CabalSpyThesesProps) {
     return () => {
       cancelled = true;
     };
-  }, [chain, mint, theme, height, radius, scriptSrc]);
+  }, [key, scriptSrc]);
 
   useEffect(() => {
     if (!isBrowser() || accessToken === undefined) return;
@@ -296,13 +348,8 @@ export function CabalSpyTheses(props: CabalSpyThesesProps) {
   // The widget mounts each element once; a new key gives a new element (and
   // iframe) when the token or the design changes.
   return createElement('div', {
-    key: `${chain}:${mint}:${theme ?? ''}:${height ?? ''}:${radius ?? ''}`,
-    'data-csid-thesis': '',
-    'data-chain': chain,
-    'data-mint': mint,
-    'data-theme': theme,
-    'data-height': height === undefined ? undefined : String(height),
-    'data-radius': radius === undefined ? undefined : String(radius),
+    key,
+    ...attrs,
     id: props.id,
     className: props.className,
     style: props.style,

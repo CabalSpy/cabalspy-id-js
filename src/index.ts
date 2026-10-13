@@ -14,6 +14,7 @@ export {
   CabalSpyID,
   DEFAULT_BASE_URL,
   DEFAULT_STREAM_URL,
+  DEFAULT_THESES_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -26,6 +27,7 @@ export {
   type LeaderboardParams,
   type LatestTransactionsParams,
   type ThesisTokenParams,
+  type ThesisScopeParam,
   type ListThesesParams,
   type ThesisRepliesParams,
   type LatestThesesParams,
@@ -67,11 +69,22 @@ export {
 } from './oidc';
 
 export {
+  ThesesStream,
+  MAX_THESES_STREAM_TOKENS,
+  type ThesisTokenRef,
+  type ThesesStreamOptions,
+  type ThesesReadyEvent,
+  type ThesesSubscribedEvent,
+  type ThesesStreamEventMap,
+} from './thesesStream';
+
+export {
   ThesisClient,
   ThesisLive,
   DEFAULT_THESIS_URL,
   DEFAULT_THESIS_WS_URL,
   type ThesisClientOptions,
+  type ThesisScopeOptions,
   type TokenThesesPage,
   type ThesisPage,
   type TokenThesesOptions,
