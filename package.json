@@ -1,0 +1,123 @@
+{
+  "name": "cabalspy-id",
+  "version": "0.1.0",
+  "description": "Official SDK for CabalSpy ID, the verified social layer for crypto trading: Login with CabalSpy ID (OpenID Connect, PKCE, ID token verification), React login button, Data API for verified wallets, KOL badges and trading stats (PnL, win rate, holdings), live trade stream and webhook verification.",
+  "keywords": [
+    "cabalspy",
+    "cabalspy-id",
+    "csid",
+    "login",
+    "oidc",
+    "openid-connect",
+    "oauth2",
+    "pkce",
+    "sign-in",
+    "socialfi",
+    "identity",
+    "verified-wallets",
+    "wallet-verification",
+    "kol",
+    "kol-badge",
+    "x-login",
+    "twitter-login",
+    "copy-trading",
+    "leaderboard",
+    "pnl",
+    "win-rate",
+    "trading-stats",
+    "webhooks",
+    "standard-webhooks",
+    "websocket",
+    "react",
+    "solana",
+    "base",
+    "bnb",
+    "ethereum",
+    "robinhood-chain",
+    "sdk",
+    "typescript"
+  ],
+  "license": "MIT",
+  "homepage": "https://id.cabalspy.xyz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CabalSpy/cabalspy-id-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CabalSpy/cabalspy-id-js/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "react": [
+        "./dist/react.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "ws": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "ws": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@types/ws": "^8.18.2",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
+    "jsdom": "^25.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.4",
+    "ws": "^8.22.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
