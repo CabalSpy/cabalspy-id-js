@@ -13,7 +13,8 @@ One package, everything you need:
 | | |
 |---|---|
 | `CabalSpyIDAuth` | OpenID Connect for your server: PKCE, code exchange, refresh, revoke, userinfo, ID token verification (ES256 / JWKS) |
-| `cabalspy-id/react` | `<CabalSpyLogin />` button and `useCabalSpyID()` hook |
+| `cabalspy-id/react` | `<CabalSpyLogin />` button, `<CabalSpyTheses />` widget and `useCabalSpyID()` hook |
+| `ThesisClient` | public token thesis API for your own UI in the browser (user access token) with `live()` updates |
 | `CabalSpyID` | Data API client for `https://api-id.cabalspy.xyz/v1`, typed responses, pagination, live trade stream |
 | `verifyWebhook` | Standard Webhooks signature verification |
 
@@ -113,7 +114,7 @@ if (isLimited(claims)) {
 | `verifyIdToken(idToken, { nonce?, maxAge? })` | ES256 signature via JWKS, iss, aud, azp, exp, nonce |
 | `verifyAccessToken(accessToken)` | for access tokens your frontend sends to your API (`typ: at+jwt`) |
 
-Scopes: `openid` `profile` `wallets` `onchain` `offline_access`. Client authentication: `client_secret_basic` (default with a secret), `client_secret_post`, `none` (public clients). Access and ID tokens live 15 minutes; refresh tokens 30 days of inactivity, 90 days absolute.
+Scopes: `openid` `profile` `wallets` `onchain` `thesis` `offline_access` (`thesis`: post theses and replies, react and report in the user's name). Client authentication: `client_secret_basic` (default with a secret), `client_secret_post`, `none` (public clients). Access and ID tokens live 15 minutes; refresh tokens 30 days of inactivity, 90 days absolute.
 
 **Users over the plan's limit can always sign in.** Their token carries an anonymous `sub` (`anon_...`), `limited: true` and `reason: "plan_user_limit"`, and no profile or wallet data, until the platform upgrades. `isLimited(claims)` checks both.
 
@@ -205,12 +206,85 @@ try {
 
 `429`, `5xx` and network errors are retried with exponential backoff (default 2 retries); `Retry-After` wins. The rate limit of the last call is in `csid.lastRateLimit` (`X-RateLimit-Limit/Remaining/Reset`).
 
+## Token theses
+
+A thesis is a short opinion on a token (up to 1000 characters), optionally tagged bull or bear. **Only holders post theses**: one of the author's verified wallets bought the token and still holds it. Every thesis shows the author's real position — what they bought when posting and their live PnL now (or "sold"); authors who keep their trading private show only that they hold. Anyone signed in can reply and react (`like` plus 🔥 🚀 💎 👀 😂 🤝 💀 🐂 🐻). The same theses appear in the widget, through the Data API and on every platform.
+
+Writing needs the scope **`thesis`** in your login (`scope: ['openid', 'profile', 'thesis']`).
+
+### Widget
+
+```tsx
+import { CabalSpyTheses, useCabalSpyID } from 'cabalspy-id/react';
+
+const { accessToken } = useCabalSpyID({ clientId: 'csid_...' });
+<CabalSpyTheses chain="solana" mint={mint} theme="dark" height={520} accessToken={accessToken} />
+```
+
+Plain HTML: `<div data-csid-thesis data-chain="solana" data-mint="..." data-theme="dark"></div>` with `widget.js`; `CSID.thesis.setAccessToken(token)` lets the signed-in person write without signing in again inside the widget (after a browser login through the widget this happens automatically).
+
+### Your own UI in the browser: `ThesisClient`
+
+The public thesis API (`https://id.cabalspy.xyz/thesis/v1`) needs no API key. Reading is open; writing uses the signed-in user's access token (scope `thesis`).
+
+```ts
+import { ThesisClient } from 'cabalspy-id';
+
+const theses = new ThesisClient({ accessToken }); // from csid:login / useCabalSpyID()
+
+const { items, token, summary } = await theses.list('solana', mint, { sort: 'top' });
+const me = await theses.me('solana', mint);       // { can_post, can_reply, holder, paused, user }
+if (me.can_post) await theses.post('solana', mint, { body: 'Strong community, still early.', stance: 'bull' });
+await theses.reply(items[0].id, 'Agree, chart looks good');
+await theses.react(items[0].id, '🚀');
+
+const live = theses.live('solana', mint);         // public websocket for one token
+live.on('thesis', (t) => prepend(t)).on('reply', addReply).on('reaction', updateCounts).on('removed', ({ id }) => drop(id));
+await live.connect();
+```
+
+Methods: `list`, `iterate`, `summary`, `get`, `replies`, `byUser`, `me`, `post`, `reply`, `react`, `report`, `delete`, `live`, `setAccessToken`.
+
+### Data API (server to server)
+
+Reading works with any key, for every token and user. Writing happens **in the name of one of your users**: pass their `csid_id` (the `sub` of their ID token); they must have signed in to your app with the scope `thesis` and be within your plan's user limit.
+
+```ts
+const list = await csid.listTheses({ blockchain: 'solana', mint, sort: 'new' });
+const counts = await csid.thesisSummary({ blockchain: 'solana', mint });  // theses, bull, bear, authors, token
+
+const { can_post, reason } = await csid.thesisEligibility({ blockchain: 'solana', mint, csid_id: claims.sub });
+if (can_post) {
+  const t = await csid.postThesis({ blockchain: 'solana', mint, body: 'Accumulating here.', stance: 'bull', csid_id: claims.sub });
+}
+```
+
+| Method | Endpoint |
+|---|---|
+| `listTheses({ blockchain, mint, sort?, stance?, limit?, cursor?, csid_id? })` / `iterTheses()` | `GET /v1/theses` |
+| `thesisSummary({ blockchain, mint })` | `GET /v1/theses/summary` |
+| `thesis(id, { csid_id? })` | `GET /v1/theses/item` |
+| `thesisReplies({ id, limit?, cursor? })` / `iterThesisReplies()` | `GET /v1/theses/replies` |
+| `latestTheses({ blockchain?, users?: 'all' \| 'instance', limit?, cursor? })` | `GET /v1/theses/latest` |
+| `userTheses({ csid_id } \| { username })` | `GET /v1/theses/user` |
+| `thesisEligibility({ blockchain, mint, csid_id })` | `GET /v1/theses/eligibility` |
+| `postThesis({ blockchain, mint, body, stance?, csid_id })` | `POST /v1/theses` |
+| `replyToThesis({ thesis_id, body, csid_id })` | `POST /v1/theses/replies` |
+| `reactToThesis({ thesis_id, emoji, on?, csid_id })` | `POST /v1/theses/reactions` |
+| `reportThesis({ thesis_id, reason, note?, csid_id })` | `POST /v1/theses/report` |
+| `deleteThesis({ thesis_id, csid_id })` | `POST /v1/theses/delete` |
+
+Thesis error codes: `not_a_holder`, `consent_required`, `scope_missing`, `plan_user_limit` (`PlanUserLimitError`), `posting_paused`, `sandbox_user` (403, `PermissionError`); `invalid_body`, `duplicate` (400); `not_found` (404); `rate_limited` (429). Writes are never retried after a server or network error, so a post can't be duplicated; only the API's own rate limit is retried.
+
+Live over the stream: `csid.stream({ events: ['theses'], blockchain: 'solana', mint })` emits `thesis`, `thesis.reply`, `thesis.reaction` and `thesis.removed` (or iterate `stream.theses()`). New theses of your users also arrive as the webhook `thesis.created` (`event.data.thesis`).
+
 ## Live stream
 
 Every trade of your users the moment it is indexed, with the trader's profile (Pro plan and up).
 
 ```ts
 const stream = csid.stream({ blockchain: 'solana' }); // omit blockchain for every chain
+// events: ['trades'] (default), ['theses'] or both; mint: theses of one token
 
 stream.on('trade', (t) => console.log(t.trader?.username, t.transaction_type, t.token_symbol, t.value_usd));
 stream.on('error', (e) => console.error(e.code, e.message));
@@ -220,7 +294,7 @@ await stream.connect(); // resolves once the server confirmed the subscription
 for await (const trade of csid.stream()) console.log(trade);
 ```
 
-The server sends a heartbeat every 30 seconds. The client reconnects with exponential backoff after a dropped connection or when heartbeats stop; configuration errors (`invalid_api_key`, `plan_required`, `scope_not_allowed`) are fatal and stop reconnecting. Events: `trade`, `subscribed`, `heartbeat`, `open`, `close`, `reconnecting`, `error`.
+The server sends a heartbeat every 30 seconds. The client reconnects with exponential backoff after a dropped connection or when heartbeats stop; configuration errors (`invalid_api_key`, `plan_required`, `scope_not_allowed`) are fatal and stop reconnecting. Events: `trade`, `thesis`, `thesis.reply`, `thesis.reaction`, `thesis.removed`, `subscribed`, `heartbeat`, `open`, `close`, `reconnecting`, `error`.
 
 Browsers, Deno, Bun and Node 22+ have a global `WebSocket`. On Node 18–21 install `ws` and pass it:
 
@@ -231,7 +305,7 @@ const stream = csid.stream({ WebSocketImpl: WebSocket });
 
 ## Webhooks
 
-Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked` — only for users within the plan's limit.
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created` — only for users within the plan's limit.
 
 ```ts
 import { verifyWebhook } from 'cabalspy-id';

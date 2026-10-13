@@ -39,6 +39,16 @@ import {
   type PnlCalendarResponse,
   type Profile,
   type Scope,
+  THESIS_EMOJIS,
+  THESIS_REPORT_REASONS,
+  type Thesis,
+  type ThesisEligibility,
+  type ThesisEmoji,
+  type ThesisReactions,
+  type ThesisReportReason,
+  type ThesisSort,
+  type ThesisStance,
+  type ThesisSummary,
   type Trade,
   type TrackerResponse,
   type WalletLookupResponse,
@@ -140,6 +150,88 @@ export interface LatestTransactionsParams extends ScopedParams {
   limit?: number;
 }
 
+// -- theses ------------------------------------------------------------------
+
+export interface ThesisTokenParams {
+  blockchain: Chain;
+  /** Token mint / contract address. */
+  mint: string;
+}
+
+export interface ListThesesParams extends ThesisTokenParams {
+  /** Default: new */
+  sort?: ThesisSort;
+  stance?: ThesisStance;
+  /** 1-50. Default: 20 */
+  limit?: number;
+  cursor?: string;
+  /** Viewer: fills `my_reactions` and `is_mine` for this user. */
+  csid_id?: string;
+}
+
+export interface ThesisRepliesParams {
+  /** The thesis id. */
+  id: string;
+  /** 1-100. Default: 50 */
+  limit?: number;
+  cursor?: string;
+  csid_id?: string;
+}
+
+export interface LatestThesesParams {
+  /** Omit for every chain. */
+  blockchain?: Chain;
+  /** `instance`: only theses of your instance's users. Default: all */
+  users?: 'all' | 'instance';
+  /** 1-50. Default: 20 */
+  limit?: number;
+  cursor?: string;
+  csid_id?: string;
+}
+
+/** Exactly one of csid_id or username. */
+export type UserThesesParams = { limit?: number; cursor?: string } & (
+  | { csid_id: string; username?: never }
+  | { username: string; csid_id?: never }
+);
+
+/**
+ * Writes happen in the name of one of your users: `csid_id` is the `sub` of
+ * their ID token. They must have signed in to your app with the scope
+ * `thesis` and be within your plan's user limit.
+ */
+export interface ThesisWriter {
+  csid_id: string;
+}
+
+export interface PostThesisParams extends ThesisTokenParams, ThesisWriter {
+  /** Up to 1000 characters. Only holders of the token can post. */
+  body: string;
+  stance?: ThesisStance;
+}
+
+export interface ReplyToThesisParams extends ThesisWriter {
+  thesis_id: string;
+  body: string;
+}
+
+export interface ReactToThesisParams extends ThesisWriter {
+  thesis_id: string;
+  emoji: ThesisEmoji;
+  /** false removes the reaction. Default: true */
+  on?: boolean;
+}
+
+export interface ReportThesisParams extends ThesisWriter {
+  thesis_id: string;
+  reason: ThesisReportReason;
+  note?: string;
+}
+
+export interface DeleteThesisParams extends ThesisWriter {
+  thesis_id: string;
+}
+
 function buildQuery(params: Query): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -181,6 +273,12 @@ function assertRequired(value: unknown, parameter: string): void {
   if (value === undefined || value === null || value === '') {
     throw new BadRequestError(`Parameter '${parameter}' is required`, { code: 'missing_parameter', parameter });
   }
+}
+
+function assertToken(p: { blockchain?: string; mint?: string }): void {
+  assertRequired(p.blockchain, 'blockchain');
+  assertOneOf(p.blockchain, CHAINS, 'blockchain');
+  assertRequired(p.mint, 'mint');
 }
 
 function assertWallet(p: { blockchain?: string; address?: string }): void {
@@ -233,17 +331,20 @@ export class CabalSpyID {
 
   // ── HTTP core ─────────────────────────────────────────────────────────────
 
-  /** GET returning the full envelope: data, pagination, meta and rate limit. */
-  async getRaw<T>(path: string, query: Query = {}, opts: { auth?: boolean } = {}): Promise<Envelope<T>> {
-    const auth = opts.auth ?? true;
+  private authedQuery(query: Query, auth: boolean): Query {
     if (auth && !this.apiKey) {
       throw new AuthenticationError(
         'Missing API key. Pass { apiKey } or set CABALSPY_ID_API_KEY (the CabalSpy API key with CabalSpy ID enabled).',
         { status: 401, code: 'missing_api_key' },
       );
     }
-    const q: Query = auth && this.instance && query.instance === undefined ? { ...query, instance: this.instance } : query;
-    return this.request<T>(path + buildQuery(q), auth);
+    return auth && this.instance && query.instance === undefined ? { ...query, instance: this.instance } : query;
+  }
+
+  /** GET returning the full envelope: data, pagination, meta and rate limit. */
+  async getRaw<T>(path: string, query: Query = {}, opts: { auth?: boolean } = {}): Promise<Envelope<T>> {
+    const auth = opts.auth ?? true;
+    return this.request<T>('GET', path + buildQuery(this.authedQuery(query, auth)), auth);
   }
 
   /** GET returning only the data payload. */
@@ -251,8 +352,23 @@ export class CabalSpyID {
     return (await this.getRaw<T>(path, query)).data;
   }
 
-  private async request<T>(path: string, auth: boolean): Promise<Envelope<T>> {
+  /**
+   * POST with a JSON body, returning the full envelope. POSTs are not retried
+   * after a server or network error (the write may have happened); only the
+   * API's own rate limit (429 rate_limit_exceeded) is retried.
+   */
+  async postRaw<T>(path: string, body: Record<string, unknown>): Promise<Envelope<T>> {
+    return this.request<T>('POST', path + buildQuery(this.authedQuery({}, true)), true, body);
+  }
+
+  /** POST returning only the data payload. */
+  async post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    return (await this.postRaw<T>(path, body)).data;
+  }
+
+  private async request<T>(method: 'GET' | 'POST', path: string, auth: boolean, body?: unknown): Promise<Envelope<T>> {
     const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+    const label = `${method} ${stripQuery(path)}`;
     let lastError: CabalSpyIDError | undefined;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
@@ -264,24 +380,25 @@ export class CabalSpyID {
       let text: string;
       try {
         res = await this.fetchImpl(url, {
-          method: 'GET',
+          method,
           signal: controller.signal,
           headers: {
             ...(auth ? { Authorization: `Bearer ${this.apiKey}` } : {}),
             Accept: 'application/json',
             'User-Agent': USER_AGENT,
+            ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
             ...this.extraHeaders,
           },
+          body: body !== undefined ? JSON.stringify(body) : undefined,
         });
         text = await res.text();
       } catch (err) {
         const aborted = (err as Error)?.name === 'AbortError';
         lastError = new ConnectionError(
-          aborted
-            ? `Request timed out after ${this.timeout} ms: GET ${stripQuery(path)}`
-            : `Network error: ${(err as Error)?.message ?? String(err)}`,
+          aborted ? `Request timed out after ${this.timeout} ms: ${label}` : `Network error: ${(err as Error)?.message ?? String(err)}`,
           { code: aborted ? 'timeout' : 'connection_error' },
         );
+        if (method !== 'GET') throw lastError; // the write may have happened
         continue; // network errors are retryable
       } finally {
         clearTimeout(timer);
@@ -306,8 +423,10 @@ export class CabalSpyID {
       if (!res.ok) {
         const errBody = (parsed as { error?: ApiErrorBody } | null)?.error ?? null;
         const retryAfter = parseNumHeader(res.headers, 'Retry-After');
-        const error = errorFromStatus(res.status, errBody, rateLimit, retryAfter, `HTTP ${res.status} on GET ${stripQuery(path)}`);
-        if (isRetryable(error) && attempt < this.maxRetries) {
+        const error = errorFromStatus(res.status, errBody, rateLimit, retryAfter, `HTTP ${res.status} on ${label}`);
+        const retryable =
+          method === 'GET' ? isRetryable(error) : error instanceof RateLimitError && error.code === 'rate_limit_exceeded';
+        if (retryable && attempt < this.maxRetries) {
           lastError = error;
           continue;
         }
@@ -315,7 +434,7 @@ export class CabalSpyID {
       }
 
       if (parsed == null || typeof parsed !== 'object' || !('data' in parsed)) {
-        throw new InvalidResponseError(`Unexpected response shape on GET ${stripQuery(path)}: no data field`, {
+        throw new InvalidResponseError(`Unexpected response shape on ${label}: no data field`, {
           status: res.status,
           code: 'invalid_response',
           rateLimit,
@@ -323,7 +442,7 @@ export class CabalSpyID {
       }
       return { ...(parsed as ApiResponse<T>), rateLimit, status: res.status };
     }
-    throw lastError ?? new ConnectionError(`Request failed: GET ${stripQuery(path)}`);
+    throw lastError ?? new ConnectionError(`Request failed: ${label}`);
   }
 
   /**
@@ -480,6 +599,137 @@ export class CabalSpyID {
   async latestTransactions(params: LatestTransactionsParams = {}): Promise<Trade[]> {
     assertOneOf(params.blockchain, CHAINS, 'blockchain');
     return this.get<Trade[]>('/transactions/latest', { ...params });
+  }
+
+  // -- theses ----------------------------------------------------------------
+  // Reading: theses are public; any key reads them, also outside its instance.
+
+  /** GET /v1/theses — theses on a token, newest or top first. */
+  async listTheses(params: ListThesesParams): Promise<Thesis[]> {
+    return (await this.listThesesRaw(params)).data;
+  }
+
+  async listThesesRaw(params: ListThesesParams): Promise<Envelope<Thesis[]>> {
+    assertToken(params);
+    assertOneOf(params.sort, ['new', 'top'], 'sort');
+    assertOneOf(params.stance, ['bull', 'bear'], 'stance');
+    return this.getRaw<Thesis[]>('/theses', { ...params });
+  }
+
+  /** Iterates over every thesis on a token, following `next_cursor`. */
+  async *iterTheses(params: ListThesesParams): AsyncGenerator<Thesis, void, void> {
+    for await (const page of this.pages((cursor) => this.listThesesRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /** GET /v1/theses/summary — counts (theses, bull, bear, authors) and token info. */
+  async thesisSummary(params: ThesisTokenParams): Promise<ThesisSummary> {
+    assertToken(params);
+    return this.get<ThesisSummary>('/theses/summary', { blockchain: params.blockchain, mint: params.mint });
+  }
+
+  /** GET /v1/theses/item — one thesis or reply. */
+  async thesis(id: string, params: { csid_id?: string } = {}): Promise<Thesis> {
+    assertRequired(id, 'id');
+    return this.get<Thesis>('/theses/item', { id, csid_id: params.csid_id });
+  }
+
+  /** GET /v1/theses/replies — replies to a thesis. */
+  async thesisReplies(params: ThesisRepliesParams): Promise<Thesis[]> {
+    return (await this.thesisRepliesRaw(params)).data;
+  }
+
+  async thesisRepliesRaw(params: ThesisRepliesParams): Promise<Envelope<Thesis[]>> {
+    assertRequired(params.id, 'id');
+    return this.getRaw<Thesis[]>('/theses/replies', { ...params });
+  }
+
+  /** Iterates over every reply of a thesis. */
+  async *iterThesisReplies(params: ThesisRepliesParams): AsyncGenerator<Thesis, void, void> {
+    for await (const page of this.pages((cursor) => this.thesisRepliesRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /** GET /v1/theses/latest — newest theses on every token (or only your users'). */
+  async latestTheses(params: LatestThesesParams = {}): Promise<Thesis[]> {
+    return (await this.latestThesesRaw(params)).data;
+  }
+
+  async latestThesesRaw(params: LatestThesesParams = {}): Promise<Envelope<Thesis[]>> {
+    assertOneOf(params.blockchain, CHAINS, 'blockchain');
+    assertOneOf(params.users, ['all', 'instance'], 'users');
+    return this.getRaw<Thesis[]>('/theses/latest', { ...params });
+  }
+
+  /** GET /v1/theses/user — theses of one user, by csid_id or X username. */
+  async userTheses(params: UserThesesParams): Promise<Thesis[]> {
+    return (await this.userThesesRaw(params)).data;
+  }
+
+  async userThesesRaw(params: UserThesesParams): Promise<Envelope<Thesis[]>> {
+    const p = params as { csid_id?: string; username?: string; limit?: number; cursor?: string };
+    if (!!p.csid_id === !!p.username) {
+      throw new BadRequestError('Pass exactly one of: csid_id, username.', {
+        code: 'missing_parameter',
+        parameter: 'csid_id|username',
+      });
+    }
+    return this.getRaw<Thesis[]>('/theses/user', { ...p, username: p.username?.replace(/^@/, '') });
+  }
+
+  /**
+   * GET /v1/theses/eligibility — may this user post (holder, not paused) and
+   * reply on this token through your app? `reason` says why not
+   * (consent_required, plan_user_limit, sandbox_user).
+   */
+  async thesisEligibility(params: ThesisTokenParams & ThesisWriter): Promise<ThesisEligibility> {
+    assertToken(params);
+    assertRequired(params.csid_id, 'csid_id');
+    return this.get<ThesisEligibility>('/theses/eligibility', { ...params });
+  }
+
+  // Writing, in the name of one of your users (scope `thesis`).
+
+  /** POST /v1/theses — posts a thesis. Holders only (`not_a_holder` otherwise). */
+  async postThesis(params: PostThesisParams): Promise<Thesis> {
+    assertToken(params);
+    assertRequired(params.body, 'body');
+    assertRequired(params.csid_id, 'csid_id');
+    assertOneOf(params.stance, ['bull', 'bear'], 'stance');
+    return this.post<Thesis>('/theses', { ...params });
+  }
+
+  /** POST /v1/theses/replies — replies to a thesis. */
+  async replyToThesis(params: ReplyToThesisParams): Promise<Thesis> {
+    assertRequired(params.thesis_id, 'thesis_id');
+    assertRequired(params.body, 'body');
+    assertRequired(params.csid_id, 'csid_id');
+    return this.post<Thesis>('/theses/replies', { ...params });
+  }
+
+  /** POST /v1/theses/reactions — adds (or with `on: false` removes) a reaction. */
+  async reactToThesis(params: ReactToThesisParams): Promise<ThesisReactions> {
+    assertRequired(params.thesis_id, 'thesis_id');
+    assertOneOf(params.emoji, THESIS_EMOJIS, 'emoji');
+    assertRequired(params.csid_id, 'csid_id');
+    return this.post<ThesisReactions>('/theses/reactions', { ...params, on: params.on ?? true });
+  }
+
+  /** POST /v1/theses/report — reports a post (hidden for review after 3 reports). */
+  async reportThesis(params: ReportThesisParams): Promise<{ reported: true }> {
+    assertRequired(params.thesis_id, 'thesis_id');
+    assertOneOf(params.reason, THESIS_REPORT_REASONS, 'reason');
+    assertRequired(params.csid_id, 'csid_id');
+    return this.post<{ reported: true }>('/theses/report', { ...params });
+  }
+
+  /** POST /v1/theses/delete — deletes the user's own thesis or reply. */
+  async deleteThesis(params: DeleteThesisParams): Promise<{ deleted: true }> {
+    assertRequired(params.thesis_id, 'thesis_id');
+    assertRequired(params.csid_id, 'csid_id');
+    return this.post<{ deleted: true }>('/theses/delete', { ...params });
   }
 
   // ── stream ────────────────────────────────────────────────────────────────

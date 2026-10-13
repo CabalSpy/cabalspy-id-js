@@ -4,6 +4,7 @@
  *   import { CabalSpyLogin, useCabalSpyID } from 'cabalspy-id/react';
  *
  *   <CabalSpyLogin clientId="csid_…" onLogin={({ idToken }) => sendToBackend(idToken)} />
+ *   <CabalSpyTheses chain="solana" mint={mint} />
  *
  * Loads https://id.cabalspy.xyz/widget.js once and maps props to its data-*
  * attributes. Always verify `idToken` on your backend (CabalSpyIDAuth.verifyIdToken)
@@ -12,7 +13,7 @@
 
 import { type CSSProperties, createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import type { CabalSpyIDClaims, OidcScope } from './types';
+import type { CabalSpyIDClaims, Chain, OidcScope } from './types';
 
 export const WIDGET_SRC = 'https://id.cabalspy.xyz/widget.js';
 
@@ -55,6 +56,12 @@ export interface CSIDGlobal {
   setUser(clientId: string, user: CabalSpyIDUserSummary | CabalSpyIDClaims): void;
   signOut(clientId: string): void;
   onLogin(cb: (r: CabalSpyIDLogin) => void): void;
+  /** Thesis widgets on the page (data-csid-thesis). */
+  thesis?: {
+    /** Lets thesis widgets write as this user (access token with the scope "thesis"). */
+    setAccessToken(token: string | null): void;
+    clear(): void;
+  };
 }
 
 declare global {
@@ -134,7 +141,10 @@ export interface CabalSpyLoginProps {
   href?: string;
   /** Browser apps: redirect URI (default: the current page). */
   redirectUri?: string;
-  /** Browser apps: requested scopes (default: openid profile). */
+  /**
+   * Browser apps: requested scopes (default: openid profile). Add `thesis` so
+   * the person can write in thesis widgets on your page right after sign-in.
+   */
   scope?: string | OidcScope[];
   /** Server-side apps: the signed-in person's `sub`, to show the avatar menu. */
   user?: string;
@@ -219,6 +229,84 @@ export function CabalSpyLogin(props: CabalSpyLoginProps) {
   }, [key, scriptSrc]);
 
   return createElement('div', { ...attrs, id: props.id, className: props.className, style: props.style });
+}
+
+// ── <CabalSpyTheses /> ────────────────────────────────────────────────────────
+
+export interface CabalSpyThesesProps {
+  /** solana | bnb | base | eth | rh */
+  chain: Chain;
+  /** Token mint / contract address. */
+  mint: string;
+  /** Default: dark */
+  theme?: 'dark' | 'light';
+  /** Initial height in px; the widget then sizes itself to its content. Default: 520 */
+  height?: number;
+  /** Corner radius in px. Default: 12 */
+  radius?: number;
+  /**
+   * The signed-in user's CabalSpy ID access token (scope `thesis`), so they
+   * write without signing in again inside the widget. After a browser login
+   * through the widget this is set automatically. `null` signs the widget out.
+   */
+  accessToken?: string | null;
+  scriptSrc?: string;
+  className?: string;
+  style?: CSSProperties;
+  id?: string;
+}
+
+/**
+ * Token theses widget: holders' theses on a token with their real position,
+ * replies, reactions, live updates.
+ *
+ *   <CabalSpyTheses chain="solana" mint={mint} theme="dark" accessToken={accessToken} />
+ */
+export function CabalSpyTheses(props: CabalSpyThesesProps) {
+  const { chain, mint, theme, height, radius, accessToken, scriptSrc } = props;
+
+  useEffect(() => {
+    if (!isBrowser()) return;
+    let cancelled = false;
+    loadCabalSpyIDWidget(scriptSrc).then(
+      (csid) => {
+        if (!cancelled) csid.mount();
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [chain, mint, theme, height, radius, scriptSrc]);
+
+  useEffect(() => {
+    if (!isBrowser() || accessToken === undefined) return;
+    let cancelled = false;
+    loadCabalSpyIDWidget(scriptSrc).then(
+      (csid) => {
+        if (!cancelled) csid.thesis?.setAccessToken(accessToken);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, scriptSrc]);
+
+  // The widget mounts each element once; a new key gives a new element (and
+  // iframe) when the token or the design changes.
+  return createElement('div', {
+    key: `${chain}:${mint}:${theme ?? ''}:${height ?? ''}:${radius ?? ''}`,
+    'data-csid-thesis': '',
+    'data-chain': chain,
+    'data-mint': mint,
+    'data-theme': theme,
+    'data-height': height === undefined ? undefined : String(height),
+    'data-radius': radius === undefined ? undefined : String(radius),
+    id: props.id,
+    className: props.className,
+    style: props.style,
+  });
 }
 
 // ── useCabalSpyID() ───────────────────────────────────────────────────────────

@@ -4,7 +4,17 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AuthenticationError, CabalSpyID, CabalSpyIDAuth, PermissionError, decodeJwt } from '../../src/index';
+import {
+  AuthenticationError,
+  BadRequestError,
+  CabalSpyID,
+  CabalSpyIDAuth,
+  PermissionError,
+  ThesisClient,
+  decodeJwt,
+} from '../../src/index';
+
+const WSOL = 'So11111111111111111111111111111111111111112';
 
 describe('live: Data API', () => {
   it('GET /v1/health', async () => {
@@ -64,5 +74,45 @@ describe('live: OpenID Connect', () => {
   it('builds an authorization URL against the real endpoint', async () => {
     const req = await auth.createAuthorizationUrl();
     expect(req.url.startsWith('https://id.cabalspy.xyz/oauth/authorize?')).toBe(true);
+  });
+});
+
+describe('live: theses', () => {
+  const tc = new ThesisClient();
+
+  it('lists theses of a token with token info and counts', async () => {
+    const page = await tc.list('solana', WSOL, { limit: 2 });
+    expect(Array.isArray(page.items)).toBe(true);
+    expect(page.token).toMatchObject({ chain: 'solana', mint: WSOL });
+    expect(typeof page.summary.theses).toBe('number');
+    expect(page.pagination).toMatchObject({ limit: 2 });
+  });
+
+  it('summary', async () => {
+    const s = await tc.summary('solana', WSOL);
+    expect(s).toMatchObject({ token: { mint: WSOL } });
+    expect(typeof s.bull).toBe('number');
+  });
+
+  it('maps errors: bad mint, missing / invalid token', async () => {
+    await expect(tc.summary('solana', 'not-a-mint')).rejects.toBeInstanceOf(BadRequestError);
+    const signedOut = new ThesisClient({ accessToken: 'not-a-token' });
+    await expect(signedOut.me('solana', WSOL)).rejects.toBeInstanceOf(AuthenticationError);
+  });
+
+  it('the Data API theses route needs a key', async () => {
+    const csid = new CabalSpyID({ apiKey: '' });
+    await expect(csid.getRaw('/theses', { blockchain: 'solana', mint: WSOL }, { auth: false })).rejects.toMatchObject({
+      status: 401,
+      code: 'missing_api_key',
+    });
+  });
+
+  it('opens the public live socket', async () => {
+    if (typeof (globalThis as { WebSocket?: unknown }).WebSocket !== 'function') return; // Node < 22
+    const live = tc.live('solana', WSOL, { reconnect: false });
+    await live.connect();
+    expect(live.connected).toBe(true);
+    live.close();
   });
 });

@@ -3,6 +3,7 @@
  *
  * - CabalSpyID:       Data API client (https://api-id.cabalspy.xyz/v1) and live stream
  * - CabalSpyIDAuth:   "Login with CabalSpy ID" (OpenID Connect, PKCE, ID token verification)
+ * - ThesisClient:     public token thesis API for browsers (user access token) and live()
  * - verifyWebhook:    Standard Webhooks signature verification
  * - cabalspy-id/react: <CabalSpyLogin /> button and useCabalSpyID() hook
  *
@@ -24,6 +25,17 @@ export {
   type HistoryParams,
   type LeaderboardParams,
   type LatestTransactionsParams,
+  type ThesisTokenParams,
+  type ListThesesParams,
+  type ThesisRepliesParams,
+  type LatestThesesParams,
+  type UserThesesParams,
+  type ThesisWriter,
+  type PostThesisParams,
+  type ReplyToThesisParams,
+  type ReactToThesisParams,
+  type ReportThesisParams,
+  type DeleteThesisParams,
 } from './client';
 
 export {
@@ -35,6 +47,8 @@ export {
   type HeartbeatEvent,
   type CloseEvent,
   type ReconnectEvent,
+  type StreamTopic,
+  type ThesisStreamEvent,
 } from './stream';
 
 export {
@@ -51,6 +65,21 @@ export {
   type VerifyIdTokenOptions,
   type LoginResult,
 } from './oidc';
+
+export {
+  ThesisClient,
+  ThesisLive,
+  DEFAULT_THESIS_URL,
+  DEFAULT_THESIS_WS_URL,
+  type ThesisClientOptions,
+  type TokenThesesPage,
+  type ThesisPage,
+  type TokenThesesOptions,
+  type ThesisViewer,
+  type ThesisMe,
+  type ThesisLiveOptions,
+  type ThesisLiveEventMap,
+} from './thesis';
 
 export { decodeJwt, JwksCache, type EcJwk, type Jwks, type JwtHeader, type DecodedJwt } from './jwt';
 

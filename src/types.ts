@@ -439,7 +439,12 @@ export interface Trade {
 
 // ── OpenID Connect ──────────────────────────────────────────────────────────
 
-export type OidcScope = 'openid' | 'profile' | 'wallets' | 'onchain' | 'offline_access';
+/**
+ * `thesis` lets your app post theses and replies, react and report in the
+ * user's name (Data API writes with `csid_id`, or the public thesis API and
+ * the thesis widget with the user's access token).
+ */
+export type OidcScope = 'openid' | 'profile' | 'wallets' | 'onchain' | 'thesis' | 'offline_access';
 
 export interface XProfileClaim {
   id: string;
@@ -533,6 +538,7 @@ export type WebhookEventType =
   | 'profile.updated'
   | 'kol.granted'
   | 'consent.revoked'
+  | 'thesis.created'
   | 'webhook.test';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
@@ -544,3 +550,128 @@ export interface WebhookEvent<D = Record<string, unknown>> {
   /** Always carries `sub` (the user's CabalSpy ID), except for webhook.test. */
   data: D & { sub?: string };
 }
+
+/** `data` of a `thesis.created` webhook: one of your users posted a thesis. */
+export interface ThesisCreatedData {
+  sub: string;
+  thesis: Thesis;
+}
+
+// ── token theses ────────────────────────────────────────────────────────────
+
+export type ThesisStance = 'bull' | 'bear';
+export type ThesisSort = 'new' | 'top';
+
+/** Reactions: `like` plus a fixed emoji set. */
+export const THESIS_EMOJIS = ['like', '🔥', '🚀', '💎', '👀', '😂', '🤝', '💀', '🐂', '🐻'] as const;
+export type ThesisEmoji = (typeof THESIS_EMOJIS)[number];
+
+export const THESIS_REPORT_REASONS = ['spam', 'scam', 'abuse', 'impersonation', 'other'] as const;
+export type ThesisReportReason = (typeof THESIS_REPORT_REASONS)[number];
+
+/** Maximum thesis / reply length in characters. */
+export const THESIS_MAX_BODY = 1000;
+
+export interface ThesisAuthor {
+  csid_id: string;
+  username: string | null;
+  name: string | null;
+  image_url: string | null;
+  kol_badge: boolean;
+  profile_url: string | null;
+}
+
+export interface ThesisPnl {
+  invested_usd: number;
+  realized_usd: number;
+  holding_value_usd: number | null;
+  pnl_usd: number | null;
+  pnl_percent: number | null;
+}
+
+/** The author's real position in the token, when they show their trading publicly. */
+export interface ThesisPositionPublic {
+  /** What was bought and sold when the thesis was posted. */
+  at_post: ThesisPnl & { tokens_held: number | null; first_buy: string | null };
+  /** Live: PnL now, and whether the author still holds or sold. */
+  now: (ThesisPnl & { tokens_held: number; status: 'holding' | 'sold' }) | null;
+}
+
+/** The author keeps their trading private: only that they hold the token. */
+export interface ThesisPositionPrivate {
+  private: true;
+}
+
+export type ThesisPosition = ThesisPositionPublic | ThesisPositionPrivate;
+
+/** A thesis (`kind: 'thesis'`) or a reply to one (`kind: 'reply'`). */
+export interface Thesis {
+  id: string;
+  chain: Chain;
+  mint: string;
+  kind: 'thesis' | 'reply';
+  /** The thesis a reply belongs to. */
+  parent_id: string | null;
+  body: string;
+  stance: ThesisStance | null;
+  author: ThesisAuthor;
+  likes: number;
+  replies: number;
+  /** Count per reaction, e.g. { like: 3, '🚀': 1 }. */
+  reactions: Partial<Record<ThesisEmoji | string, number>>;
+  /** The viewer's own reactions (pass `csid_id` / an access token to get them). */
+  my_reactions: string[];
+  /** Name of the app it was posted through. */
+  via: string | null;
+  created_at: string;
+  is_mine: boolean;
+  /** Theses only (not replies). */
+  position?: ThesisPosition;
+}
+
+export interface ThesisToken {
+  chain: Chain;
+  mint: string;
+  name: string | null;
+  symbol: string | null;
+  logo: string | null;
+  price_usd: number | null;
+}
+
+export interface ThesisCounts {
+  theses: number;
+  bull: number;
+  bear: number;
+  authors: number;
+}
+
+export interface ThesisSummary extends ThesisCounts {
+  token: ThesisToken;
+}
+
+export interface ThesisEligibility {
+  /** Holders only: one of the user's verified wallets bought and still holds the token. */
+  can_post: boolean;
+  can_reply: boolean;
+  holder: boolean | null;
+  /** Posting paused after several hidden posts. */
+  paused: boolean;
+  /** Data API: why the user can't write for your app (consent_required, plan_user_limit, sandbox_user). */
+  reason?: string;
+}
+
+export interface ThesisReactions {
+  id: string;
+  reactions: Partial<Record<ThesisEmoji | string, number>>;
+}
+
+/** Stream / live payload of a new thesis or reply. */
+export type ThesisLiveItem = Thesis & { blockchain?: Chain };
+/** Stream / live payload of a removed (deleted or hidden) post. */
+export interface ThesisRemoved {
+  id: string;
+  blockchain?: Chain;
+  mint?: string;
+}
+/** Stream / live payload of changed reaction counts. */
+export type ThesisReactionUpdate = ThesisReactions & { blockchain?: Chain; mint?: string };

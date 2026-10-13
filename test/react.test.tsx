@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CabalSpyLogin, WIDGET_SRC, useCabalSpyID, type CabalSpyIDLogin, type UseCabalSpyIDResult } from '../src/react';
+import { CabalSpyLogin, CabalSpyTheses, WIDGET_SRC, useCabalSpyID, type CabalSpyIDLogin, type UseCabalSpyIDResult } from '../src/react';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +11,7 @@ let container: HTMLDivElement;
 let root: Root;
 const mount = vi.fn();
 const signOut = vi.fn();
+const setAccessToken = vi.fn();
 
 function fakeWidgetLoad() {
   const script = document.querySelector<HTMLScriptElement>(`script[src="${WIDGET_SRC}"]`);
@@ -26,6 +27,7 @@ function fakeWidgetLoad() {
       window.dispatchEvent(new CustomEvent('csid:logout', { detail: { clientId } }));
     },
     onLogin: vi.fn(),
+    thesis: { setAccessToken, clear: vi.fn() },
   };
   script!.dispatchEvent(new Event('load'));
 }
@@ -48,6 +50,7 @@ afterEach(() => {
   delete window.CSID;
   mount.mockReset();
   signOut.mockReset();
+  setAccessToken.mockReset();
 });
 
 describe('<CabalSpyLogin />', () => {
@@ -137,5 +140,27 @@ describe('useCabalSpyID()', () => {
     await act(async () => root.render(<Probe />));
     expect(current!.user).toMatchObject({ username: 'bob' });
     expect(current!.idToken).toBeNull();
+  });
+});
+
+describe('<CabalSpyTheses />', () => {
+  it('renders the thesis element, mounts it and passes the access token', async () => {
+    await act(async () => {
+      root.render(<CabalSpyTheses chain="solana" mint="MintA" theme="light" height={600} accessToken="at-1" />);
+    });
+    const el = container.querySelector('[data-csid-thesis]') as HTMLElement;
+    expect(el.dataset).toMatchObject({ chain: 'solana', mint: 'MintA', theme: 'light', height: '600' });
+    expect(el.hasAttribute('data-radius')).toBe(false);
+    await act(async () => fakeWidgetLoad());
+    expect(mount).toHaveBeenCalled();
+    expect(setAccessToken).toHaveBeenCalledWith('at-1');
+
+    await act(async () => {
+      root.render(<CabalSpyTheses chain="solana" mint="MintB" theme="light" height={600} accessToken={null} />);
+    });
+    const next = container.querySelector('[data-csid-thesis]') as HTMLElement;
+    expect(next).not.toBe(el); // a new element for the widget to mount
+    expect(next.dataset.mint).toBe('MintB');
+    expect(setAccessToken).toHaveBeenLastCalledWith(null);
   });
 });

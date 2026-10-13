@@ -9,11 +9,26 @@ import {
   PermissionError,
   RateLimitError,
 } from './errors';
-import { CHAINS, type Chain, type Scope, type Trade } from './types';
+import {
+  CHAINS,
+  type Chain,
+  type Scope,
+  type ThesisLiveItem,
+  type ThesisReactionUpdate,
+  type ThesisRemoved,
+  type Trade,
+} from './types';
+
+/** `trades`: your users' trades. `theses`: new theses, replies, reactions and removals (public, all users). */
+export type StreamTopic = 'trades' | 'theses';
 
 export interface StreamOptions {
-  /** Only trades on this chain. Default: every chain. */
+  /** What to receive. Default: ['trades'] */
+  events?: StreamTopic[];
+  /** Only this chain. Default: every chain. */
   blockchain?: Chain;
+  /** Theses of one token only (needs `blockchain`). */
+  mint?: string;
   /** `global` (every CabalSpy ID user) is Enterprise only. Default: instance */
   scope?: Scope;
   /** Instance client_id, when your account has several. */
@@ -40,6 +55,8 @@ export interface StreamOptions {
 export interface SubscribedEvent {
   blockchain: Chain | 'all';
   scope: Scope;
+  events?: StreamTopic[];
+  mint?: string | null;
 }
 
 export interface HeartbeatEvent {
@@ -58,6 +75,14 @@ export interface ReconnectEvent {
 
 export interface StreamEventMap {
   trade: Trade;
+  /** A new thesis (events: theses). */
+  thesis: ThesisLiveItem;
+  /** A new reply to a thesis. */
+  'thesis.reply': ThesisLiveItem;
+  /** Reaction counts of a thesis or reply changed. */
+  'thesis.reaction': ThesisReactionUpdate;
+  /** A thesis or reply was deleted or hidden. */
+  'thesis.removed': ThesisRemoved;
   subscribed: SubscribedEvent;
   heartbeat: HeartbeatEvent;
   pong: Record<string, never>;
@@ -83,11 +108,18 @@ interface MinimalWebSocket {
 }
 
 /** Server error codes that will not go away by reconnecting. */
-const FATAL_CODES = new Set(['invalid_api_key', 'plan_required', 'invalid_parameter', 'scope_not_allowed', 'product_not_enabled']);
+const FATAL_CODES = new Set([
+  'invalid_api_key',
+  'plan_required',
+  'invalid_parameter',
+  'missing_parameter',
+  'scope_not_allowed',
+  'product_not_enabled',
+]);
 
 function streamError(code: string, message: string): CabalSpyIDError {
   const opts = { code };
-  if (code === 'invalid_parameter') return new BadRequestError(message, { ...opts, status: 400 });
+  if (code === 'invalid_parameter' || code === 'missing_parameter') return new BadRequestError(message, { ...opts, status: 400 });
   if (code === 'too_many_connections') return new RateLimitError(message, { ...opts, status: 429 });
   if (FATAL_CODES.has(code)) return new PermissionError(message, { ...opts, status: 403 });
   return new CabalSpyIDError(message, opts);
@@ -110,7 +142,7 @@ function streamError(code: string, message: string): CabalSpyIDError {
  */
 export class CabalSpyIDStream {
   private ws: MinimalWebSocket | null = null;
-  private readonly opts: Required<Omit<StreamOptions, 'WebSocketImpl' | 'blockchain' | 'scope' | 'instance'>>;
+  private readonly opts: Required<Omit<StreamOptions, 'WebSocketImpl' | 'blockchain' | 'scope' | 'instance' | 'events' | 'mint'>>;
   private readonly handlers = new Map<string, Set<Handler<never>>>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -123,6 +155,17 @@ export class CabalSpyIDStream {
     private readonly apiKey: string,
     private readonly options: StreamOptions = {},
   ) {
+    const events = options.events ?? ['trades'];
+    if (!events.length || events.some((e) => e !== 'trades' && e !== 'theses')) {
+      throw new BadRequestError("events must contain 'trades' and/or 'theses'", {
+        code: 'invalid_parameter',
+        parameter: 'events',
+        allowed: ['trades', 'theses'],
+      });
+    }
+    if (options.mint && !options.blockchain) {
+      throw new BadRequestError('mint needs blockchain', { code: 'missing_parameter', parameter: 'blockchain' });
+    }
     if (options.blockchain && !(CHAINS as readonly string[]).includes(options.blockchain)) {
       throw new BadRequestError(`Unknown blockchain '${options.blockchain}'`, {
         code: 'invalid_parameter',
@@ -150,7 +193,9 @@ export class CabalSpyIDStream {
 
   private buildUrl(key: string): string {
     const sp = new URLSearchParams({ api_key: key });
+    if (this.options.events) sp.set('events', [...new Set(this.options.events)].join(','));
     if (this.options.blockchain) sp.set('blockchain', this.options.blockchain);
+    if (this.options.mint) sp.set('mint', this.options.mint);
     if (this.options.scope) sp.set('scope', this.options.scope);
     if (this.options.instance) sp.set('instance', this.options.instance);
     return `${this.url}?${sp.toString()}`;
@@ -245,6 +290,12 @@ export class CabalSpyIDStream {
             settle(null, data);
             break;
           }
+          case 'thesis':
+          case 'thesis.reply':
+          case 'thesis.reaction':
+          case 'thesis.removed':
+            this.emit(msg.event, msg.data as never);
+            break;
           case 'heartbeat':
             this.emit('heartbeat', { ts: Number(msg.ts) });
             break;
@@ -338,17 +389,41 @@ export class CabalSpyIDStream {
 
   /**
    * Iterates over trades. Connects if needed; ends when close() is called or
-   * a fatal error occurs (which is thrown).
+   * a fatal error occurs (which is thrown). Breaking out of the loop closes a
+   * connection the iterator opened.
    */
-  async *[Symbol.asyncIterator](): AsyncGenerator<Trade, void, void> {
-    const queue: Trade[] = [];
+  [Symbol.asyncIterator](): AsyncGenerator<Trade, void, void> {
+    return this.iterate<Trade>(['trade'], (_e, d) => d as Trade);
+  }
+
+  /**
+   * Iterates over thesis events (`thesis`, `thesis.reply`, `thesis.reaction`,
+   * `thesis.removed`). Open the stream with `events: ['theses']`.
+   *
+   *   for await (const { event, data } of csid.stream({ events: ['theses'] }).theses()) { … }
+   */
+  theses(): AsyncGenerator<ThesisStreamEvent, void, void> {
+    return this.iterate<ThesisStreamEvent>(
+      ['thesis', 'thesis.reply', 'thesis.reaction', 'thesis.removed'],
+      (event, data) => ({ event, data }) as ThesisStreamEvent,
+    );
+  }
+
+  private async *iterate<T>(
+    names: StreamEvent[],
+    wrap: (event: StreamEvent, data: unknown) => T,
+  ): AsyncGenerator<T, void, void> {
+    const queue: T[] = [];
     let wake: (() => void) | null = null;
     let failure: CabalSpyIDError | null = null;
     let done = false;
-    const onTrade = (t: Trade) => {
-      queue.push(t);
-      wake?.();
-    };
+    const listeners = names.map((name) => {
+      const fn = (data: unknown) => {
+        queue.push(wrap(name, data));
+        wake?.();
+      };
+      return [name, fn] as const;
+    });
     const onError = () => {
       if (this.fatal) {
         failure = this.fatal;
@@ -356,12 +431,13 @@ export class CabalSpyIDStream {
       }
     };
     const onClose = () => {
-      if (this.closedByUser) {
+      if (this.closedByUser || !this.opts.reconnect) {
         done = true;
         wake?.();
       }
     };
-    this.on('trade', onTrade).on('error', onError).on('close', onClose);
+    for (const [name, fn] of listeners) this.on(name, fn as never);
+    this.on('error', onError).on('close', onClose);
     const ownsConnection = !this.ws;
     try {
       if (ownsConnection) await this.connect();
@@ -373,12 +449,20 @@ export class CabalSpyIDStream {
         wake = null;
       }
     } finally {
-      this.off('trade', onTrade).off('error', onError).off('close', onClose);
+      for (const [name, fn] of listeners) this.off(name, fn as never);
+      this.off('error', onError).off('close', onClose);
       // Breaking out of `for await` closes a connection the iterator opened.
       if (ownsConnection && !this.closedByUser) this.close();
     }
   }
 }
+
+/** One thesis event from `stream.theses()`. */
+export type ThesisStreamEvent =
+  | { event: 'thesis'; data: ThesisLiveItem }
+  | { event: 'thesis.reply'; data: ThesisLiveItem }
+  | { event: 'thesis.reaction'; data: ThesisReactionUpdate }
+  | { event: 'thesis.removed'; data: ThesisRemoved };
 
 /** Pulls whatever detail the runtime attached to a websocket error event. */
 function describeWsEvent(ev: unknown): string {
