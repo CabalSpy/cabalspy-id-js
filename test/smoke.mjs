@@ -20,3 +20,26 @@ for (const mod of [esm, cjs]) {
   assert.equal(event.type, 'webhook.test');
 }
 console.log(`smoke ok on Node ${process.version} (SDK ${esm.SDK_VERSION})`);
+
+// Subpath entry points share their classes with the root export (ESM and CJS).
+{
+  const require = createRequire(import.meta.url);
+  const rootEsm = await import('cabalspy-id');
+  const api = await import('cabalspy-id/api');
+  const thesis = await import('cabalspy-id/thesis');
+  const widget = await import('cabalspy-id/widget');
+  assert.equal(api.CabalSpyID, rootEsm.CabalSpyID);
+  assert.equal(api.NotFoundError, rootEsm.NotFoundError);
+  assert.equal(thesis.ThesisClient, rootEsm.ThesisClient);
+  assert.equal(thesis.CabalSpyID, rootEsm.CabalSpyID);
+  assert.equal(typeof widget.mountTheses, 'function');
+  assert.equal(typeof widget.thesisWidgetAttributes({ chain: 'solana', mint: 'M' })['data-mint'], 'string');
+  const rootCjs = require('cabalspy-id');
+  for (const sub of ['cabalspy-id/api', 'cabalspy-id/thesis']) {
+    const m = require(sub);
+    assert.equal(m.CabalSpyID, rootCjs.CabalSpyID, sub);
+    assert.equal(m.CabalSpyIDError, rootCjs.CabalSpyIDError, sub);
+  }
+  assert.equal(new (require('cabalspy-id/api').NotFoundError)('x') instanceof rootCjs.CabalSpyIDError, true);
+  console.log('subpath exports ok');
+}

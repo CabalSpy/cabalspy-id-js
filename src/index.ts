@@ -5,7 +5,9 @@
  * - CabalSpyIDAuth:   "Login with CabalSpy ID" (OpenID Connect, PKCE, ID token verification)
  * - ThesisClient:     public token thesis API for browsers (user access token) and live()
  * - verifyWebhook:    Standard Webhooks signature verification
- * - cabalspy-id/react: <CabalSpyLogin /> button and useCabalSpyID() hook
+ * - cabalspy-id/react: <CabalSpyLogin />, <CabalSpyTheses /> and useCabalSpyID()
+ *
+ * Focused entry points: cabalspy-id/api, cabalspy-id/thesis, cabalspy-id/widget (browser).
  *
  * Docs: https://docs.cabalspy.xyz/cabalspy-id
  */

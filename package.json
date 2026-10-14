@@ -1,6 +1,6 @@
 {
   "name": "cabalspy-id",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "SocialFi API & SDK for CabalSpy ID — add a social layer to any app: login with X + verified wallets, live trades and PnL of your users, token theses, leaderboards and copy trading on Solana, BNB Chain, Base, Ethereum and Robinhood Chain.",
   "keywords": [
     "socialfi",
@@ -48,6 +48,26 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js",
+      "require": "./dist/api.cjs"
+    },
+    "./thesis": {
+      "types": "./dist/thesis.d.ts",
+      "import": "./dist/thesis.js",
+      "require": "./dist/thesis.cjs"
+    },
+    "./widget": {
+      "types": "./dist/widget.d.ts",
+      "import": "./dist/widget.js",
+      "require": "./dist/widget.cjs"
+    },
+    "./widget/react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
@@ -57,6 +77,18 @@
   },
   "typesVersions": {
     "*": {
+      "api": [
+        "./dist/api.d.ts"
+      ],
+      "thesis": [
+        "./dist/thesis.d.ts"
+      ],
+      "widget": [
+        "./dist/widget.d.ts"
+      ],
+      "widget/react": [
+        "./dist/react.d.ts"
+      ],
       "react": [
         "./dist/react.d.ts"
       ]
@@ -73,7 +105,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

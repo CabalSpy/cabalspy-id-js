@@ -4,6 +4,22 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-14
+
+### Added
+
+- Entry points `cabalspy-id/api` (Data API, trade stream, login, webhooks), `cabalspy-id/thesis`
+  (thesis methods, `ThesisClient`, `ThesesStream`) and `cabalspy-id/widget` (browser:
+  `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `startLogin`, `onWidgetEvents`,
+  `loginButtonAttributes`, `thesisWidgetAttributes`), plus `cabalspy-id/widget/react`
+  (same as `cabalspy-id/react`). The root export is unchanged.
+- Shared chunks in the ESM and CommonJS builds, so classes are identical across entry points.
+- Packages table (socialfi-api, socialfi-thesis, socialfi-widget) in the README.
+
+### Changed
+
+- The React components use the same attribute mapping as `cabalspy-id/widget`.
+
 ## [0.4.1] - 2026-10-14
 
 ### Changed
@@ -74,6 +90,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.5.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.2.0...v0.3.0
