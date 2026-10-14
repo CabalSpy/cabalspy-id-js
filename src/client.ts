@@ -45,6 +45,7 @@ import {
   type Thesis,
   type ThesisEligibility,
   type ThesisEmoji,
+  type ThesisNotifications,
   type ThesisReactions,
   type ThesisReportReason,
   type ThesisSort,
@@ -740,6 +741,26 @@ export class CabalSpyID {
     assertOneOf(params.reason, THESIS_REPORT_REASONS, 'reason');
     assertRequired(params.csid_id, 'csid_id');
     return this.post<{ reported: true }>('/theses/report', { ...params });
+  }
+
+  /**
+   * GET /v1/theses/notifications — moderation notifications of one of your users
+   * (warnings, hidden posts, pauses, appeal results), with the unread count.
+   */
+  async thesisNotifications(csidId: string): Promise<ThesisNotifications> {
+    assertRequired(csidId, 'csid_id');
+    return this.get<ThesisNotifications>('/theses/notifications', { csid_id: csidId });
+  }
+
+  /**
+   * POST /v1/theses/appeal — appeals a moderation decision in the user's name
+   * (an `appealable` notification, within 30 days; message 10-1000 characters).
+   */
+  async appealThesisDecision(csidId: string, notificationId: number, message: string): Promise<{ appealed: true }> {
+    assertRequired(csidId, 'csid_id');
+    assertRequired(notificationId, 'notification_id');
+    assertRequired(message, 'message');
+    return this.post<{ appealed: true }>('/theses/appeal', { csid_id: csidId, notification_id: notificationId, message });
   }
 
   /** POST /v1/theses/delete — deletes the user's own thesis or reply. */

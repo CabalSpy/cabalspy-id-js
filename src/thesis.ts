@@ -28,6 +28,8 @@ import {
   type ThesisCounts,
   type ThesisEligibility,
   type ThesisEmoji,
+  type ThesisNotices,
+  type ThesisNotifications,
   type ThesisReactions,
   type ThesisReportReason,
   type ThesisSort,
@@ -89,8 +91,8 @@ export interface ThesisViewer {
   image_url: string | null;
 }
 
-/** Eligibility of the signed-in user, plus who that is. */
-export type ThesisMe = ThesisEligibility & { user: ThesisViewer };
+/** Eligibility of the signed-in user, who that is, and their unread moderation notices. */
+export type ThesisMe = ThesisEligibility & { user: ThesisViewer; notices: ThesisNotices };
 
 function assertChain(chain: string): void {
   if (!(CHAINS as readonly string[]).includes(chain)) {
@@ -313,6 +315,27 @@ export class ThesisClient {
   /** Deletes the signed-in user's own thesis or reply. */
   async delete(id: string): Promise<{ deleted: true }> {
     return (await this.call<{ deleted: true }>('DELETE', `/items/${enc(id)}`, { auth: 'required' })).data;
+  }
+
+  /** The signed-in user's moderation notifications, with the unread count. */
+  async notifications(): Promise<ThesisNotifications> {
+    return (await this.call<ThesisNotifications>('GET', '/me/notifications', { auth: 'required' })).data;
+  }
+
+  /** Marks all of the signed-in user's notifications as read. */
+  async markNotificationsRead(): Promise<{ read: true }> {
+    return (await this.call<{ read: true }>('POST', '/me/notifications/read', { auth: 'required' })).data;
+  }
+
+  /** Appeals a moderation decision (an `appealable` notification; 10-1000 characters, within 30 days). */
+  async appeal(notificationId: number, message: string): Promise<{ appealed: true }> {
+    if (!message) throw new BadRequestError("Parameter 'message' is required", { code: 'missing_parameter', parameter: 'message' });
+    return (
+      await this.call<{ appealed: true }>('POST', `/me/notifications/${enc(String(notificationId))}/appeal`, {
+        auth: 'required',
+        body: { message },
+      })
+    ).data;
   }
 
   // ── live ──────────────────────────────────────────────────────────────────

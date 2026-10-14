@@ -32,6 +32,7 @@ const thesis = (id = 't1', extra: Partial<Thesis> = {}): Thesis => ({
   likes: 0,
   replies: 0,
   reactions: {},
+  reacted_by: [],
   my_reactions: [],
   via: 'Test App',
   created_at: '2026-10-13T00:00:00+00:00',

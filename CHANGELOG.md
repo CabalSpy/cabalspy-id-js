@@ -4,6 +4,18 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-14
+
+### Added
+
+- `Thesis.reacted_by` (who reacted recently) and `Thesis.latest_replies` (reply preview on theses).
+- Moderation notifications: Data API `thesisNotifications(csidId)` and
+  `appealThesisDecision(csidId, notificationId, message)`; public `ThesisClient.notifications()`,
+  `markNotificationsRead()` and `appeal(notificationId, message)`. Types `ThesisNotification`,
+  `ThesisNotifications`; `ThesisClient.me()` returns `notices` ({ unread, latest, url }).
+- Webhook types `thesis.reply` (`ThesisReplyData`) and `thesis.reaction` (`ThesisReactionData`).
+- Error code `reporting_paused` (403, `PermissionError`) documented.
+
 ## [0.3.0] - 2026-10-13
 
 ### Added
@@ -56,6 +68,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.4.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/CabalSpy/cabalspy-id-js/releases/tag/v0.1.0

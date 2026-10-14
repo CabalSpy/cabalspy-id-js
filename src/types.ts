@@ -539,6 +539,8 @@ export type WebhookEventType =
   | 'kol.granted'
   | 'consent.revoked'
   | 'thesis.created'
+  | 'thesis.reply'
+  | 'thesis.reaction'
   | 'webhook.test';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
@@ -555,6 +557,25 @@ export interface WebhookEvent<D = Record<string, unknown>> {
 export interface ThesisCreatedData {
   sub: string;
   thesis: Thesis;
+}
+
+/** `data` of a `thesis.reply` webhook: one of your users replied to a thesis. */
+export interface ThesisReplyData {
+  sub: string;
+  reply: Thesis;
+}
+
+/** `data` of a `thesis.reaction` webhook: one of your users added or removed a reaction. */
+export interface ThesisReactionData {
+  sub: string;
+  thesis_id: string;
+  chain: Chain;
+  mint: string;
+  emoji: ThesisEmoji | string;
+  /** true: added, false: removed. */
+  on: boolean;
+  /** The new counts. */
+  reactions: Partial<Record<ThesisEmoji | string, number>>;
 }
 
 // ── token theses ────────────────────────────────────────────────────────────
@@ -604,6 +625,14 @@ export interface ThesisPositionPrivate {
 
 export type ThesisPosition = ThesisPositionPublic | ThesisPositionPrivate;
 
+/** Who reacted recently (newest first). */
+export interface ThesisReactor {
+  emoji: ThesisEmoji | string;
+  csid_id: string;
+  username: string | null;
+  at: string;
+}
+
 /** A thesis (`kind: 'thesis'`) or a reply to one (`kind: 'reply'`). */
 export interface Thesis {
   id: string;
@@ -619,6 +648,8 @@ export interface Thesis {
   replies: number;
   /** Count per reaction, e.g. { like: 3, '🚀': 1 }. */
   reactions: Partial<Record<ThesisEmoji | string, number>>;
+  /** The latest reactions with who reacted, newest first. */
+  reacted_by: ThesisReactor[];
   /** The viewer's own reactions (pass `csid_id` / an access token to get them). */
   my_reactions: string[];
   /** Name of the app it was posted through. */
@@ -627,6 +658,8 @@ export interface Thesis {
   is_mine: boolean;
   /** Theses only (not replies). */
   position?: ThesisPosition;
+  /** Theses only: a preview of the newest replies, oldest first. */
+  latest_replies?: Thesis[];
 }
 
 export interface ThesisToken {
@@ -658,6 +691,47 @@ export interface ThesisEligibility {
   paused: boolean;
   /** Data API: why the user can't write for your app (consent_required, plan_user_limit, sandbox_user). */
   reason?: string;
+}
+
+/** Moderation notification kinds. */
+export type ThesisNotificationKind =
+  | 'post_hidden'
+  | 'paused'
+  | 'banned'
+  | 'post_removed'
+  | 'post_restored'
+  | 'appeal_accepted'
+  | 'appeal_rejected'
+  | 'reporting_paused';
+
+/** A moderation notification (warning, hidden post, pause, appeal result …). */
+export interface ThesisNotification {
+  id: number;
+  kind: ThesisNotificationKind | string;
+  /** Ready-to-show English text. */
+  text: string;
+  /** Details, e.g. thesis_id, until, note. */
+  data: Record<string, unknown>;
+  created_at: string;
+  read: boolean;
+  /** Can be appealed (within 30 days). */
+  appealable: boolean;
+  /** Appeal status when appealed: pending | accepted | rejected; null otherwise. */
+  appeal: 'pending' | 'accepted' | 'rejected' | string | null;
+}
+
+export interface ThesisNotifications {
+  unread: number;
+  items: ThesisNotification[];
+}
+
+/** Unread moderation notices of the signed-in user (public API `me()`). */
+export interface ThesisNotices {
+  unread: number;
+  /** Text of the newest notice when there are unread ones. */
+  latest: string | null;
+  /** Where the user reads all notices on id.cabalspy.xyz. */
+  url: string;
 }
 
 export interface ThesisReactions {

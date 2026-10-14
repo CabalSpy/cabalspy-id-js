@@ -133,3 +133,9 @@ describe('live: theses stream and scope', () => {
     expect(typeof s.theses).toBe('number');
   });
 });
+
+describe('live: notifications', () => {
+  it('needs a valid user token', async () => {
+    await expect(new ThesisClient({ accessToken: 'not-a-token' }).notifications()).rejects.toBeInstanceOf(AuthenticationError);
+  });
+});

@@ -1,6 +1,6 @@
 /** Internal helpers: encoding, WebCrypto access, environment. */
 
-export const SDK_VERSION = '0.3.0';
+export const SDK_VERSION = '0.4.0';
 export const USER_AGENT = `cabalspy-id-sdk/${SDK_VERSION}`;
 
 const enc = new TextEncoder();

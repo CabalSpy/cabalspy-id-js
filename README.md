@@ -248,7 +248,7 @@ live.on('thesis', (t) => prepend(t)).on('reply', addReply).on('reaction', update
 await live.connect();
 ```
 
-Methods: `list`, `iterate`, `summary`, `get`, `replies`, `byUser`, `me`, `post`, `reply`, `react`, `report`, `delete`, `live`, `setAccessToken`.
+Methods: `list`, `iterate`, `summary`, `get`, `replies`, `byUser`, `me`, `post`, `reply`, `react`, `report`, `delete`, `notifications`, `markNotificationsRead`, `appeal`, `live`, `setAccessToken`.
 
 ### Data API (server to server)
 
@@ -279,7 +279,14 @@ if (can_post) {
 | `reportThesis({ thesis_id, reason, note?, csid_id })` | `POST /v1/theses/report` |
 | `deleteThesis({ thesis_id, csid_id })` | `POST /v1/theses/delete` |
 
-Thesis error codes: `not_a_holder`, `consent_required`, `scope_missing`, `plan_user_limit` (`PlanUserLimitError`), `posting_paused`, `sandbox_user` (403, `PermissionError`); `invalid_body`, `duplicate` (400); `not_found` (404); `rate_limited` (429). Writes are never retried after a server or network error, so a post can't be duplicated; only the API's own rate limit is retried.
+| `thesisNotifications(csidId)` | `GET /v1/theses/notifications` |
+| `appealThesisDecision(csidId, notificationId, message)` | `POST /v1/theses/appeal` |
+
+Every thesis carries `reacted_by` (the latest reactions with who reacted) and, for theses, `latest_replies` (a preview of the newest replies).
+
+**Moderation.** Posts hidden after reports, pauses and moderator decisions reach the author as notifications (`{ id, kind, text, data, created_at, read, appealable, appeal }`); `appealable` ones can be appealed within 30 days with 10-1000 characters. Through the Data API in your user's name: `thesisNotifications(csidId)` / `appealThesisDecision(...)`; in the browser: `ThesisClient.notifications()`, `markNotificationsRead()`, `appeal(id, message)`. `ThesisClient.me()` also returns `notices: { unread, latest, url }` so your UI can show a badge.
+
+Thesis error codes: `not_a_holder`, `consent_required`, `scope_missing`, `plan_user_limit` (`PlanUserLimitError`), `posting_paused`, `reporting_paused`, `sandbox_user` (403, `PermissionError`); `invalid_body`, `duplicate` (400); `not_found` (404); `rate_limited` (429). Writes are never retried after a server or network error, so a post can't be duplicated; only the API's own rate limit is retried.
 
 ### Theses stream (every plan)
 
@@ -299,7 +306,7 @@ for await (const { event, data } of csid.thesesStream()) { … }  // or iterate
 
 Events: `ready`, `subscribed`, `thesis`, `thesis.reply`, `thesis.reaction`, `thesis.removed`, `heartbeat`, `reconnecting`, `close`, `error`. A refused connection (`invalid_api_key`, …) is fatal; a bad frame (`too_many_tokens`, an invalid address) is reported as `error` and the connection stays.
 
-Also over the trade stream (Pro plan): `csid.stream({ events: ['theses'], blockchain: 'solana', mint })` emits `thesis`, `thesis.reply`, `thesis.reaction` and `thesis.removed` (or iterate `stream.theses()`). New theses of your users also arrive as the webhook `thesis.created` (`event.data.thesis`).
+Also over the trade stream (Pro plan): `csid.stream({ events: ['theses'], blockchain: 'solana', mint })` emits `thesis`, `thesis.reply`, `thesis.reaction` and `thesis.removed` (or iterate `stream.theses()`). Your users' activity also arrives as webhooks: `thesis.created` (`event.data.thesis`), `thesis.reply` (`event.data.reply`) and `thesis.reaction` (`event.data`: `thesis_id`, `chain`, `mint`, `emoji`, `on`, `reactions`).
 
 ## Live stream
 
@@ -328,7 +335,7 @@ const stream = csid.stream({ WebSocketImpl: WebSocket });
 
 ## Webhooks
 
-Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created` — only for users within the plan's limit.
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created`, `thesis.reply`, `thesis.reaction` — only for users within the plan's limit.
 
 ```ts
 import { verifyWebhook } from 'cabalspy-id';
