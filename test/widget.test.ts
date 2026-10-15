@@ -121,6 +121,16 @@ describe('cabalspy-id/widget', () => {
     expect(setSignInHandler).toHaveBeenLastCalledWith(null);
   });
 
+  it('setThesisSignInHandler is a no-op on the server', async () => {
+    vi.stubGlobal('document', undefined);
+    try {
+      await expect(setThesisSignInHandler(async () => true)).resolves.toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(setSignInHandler).not.toHaveBeenCalled();
+  });
+
   it('helpers', () => {
     expect(loginButtonAttributes({ clientId: 'c', showLogo: false })['data-show-logo']).toBe('false');
     expect(() => mountTheses('#missing', { chain: 'solana', mint: 'm', clientId: 'csid_a' })).toThrow(/no element/);

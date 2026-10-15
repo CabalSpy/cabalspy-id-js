@@ -435,7 +435,7 @@ export async function setThesisAccessToken(token: string | null, scriptSrc?: str
  * calls `handler` instead of the page's login button / popup. While a handler
  * is set, the widget treats the page as the source of truth for sign-in (signed
  * out on the page = signed out in the widget). `null` removes it. Waits for
- * widget.js when it is not loaded yet.
+ * widget.js when it is not loaded yet; a no-op on the server.
  *
  *   setThesisSignInHandler(async () => {
  *     const token = await fetch('/api/csid-thesis-token').then((r) => (r.ok ? r.text() : null));
@@ -445,6 +445,7 @@ export async function setThesisAccessToken(token: string | null, scriptSrc?: str
  *   });
  */
 export async function setThesisSignInHandler(handler: ThesisSignInHandler | null, scriptSrc?: string): Promise<void> {
+  if (!isBrowser()) return; // server rendering: nothing to register
   const csid = await loadCabalSpyIDWidget(scriptSrc);
   csid.thesis?.setSignInHandler?.(handler);
 }
