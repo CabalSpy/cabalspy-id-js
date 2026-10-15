@@ -21,6 +21,7 @@ import {
 } from './errors';
 import { CabalSpyIDStream, type StreamOptions } from './stream';
 import { ThesesStream, type ThesesStreamOptions } from './thesesStream';
+import { TradeFeedStream, type TradeFeedStreamOptions } from './tradeFeedStream';
 import {
   type ApiResponse,
   CHAINS,
@@ -51,7 +52,16 @@ import {
   type ThesisSort,
   type ThesisStance,
   type ThesisSummary,
+  TRADE_FEED_FILTERS,
   type Trade,
+  type TradeFeedAddResult,
+  type TradeFeedEntry,
+  type TradeFeedFilter,
+  type TradeFeedItem,
+  type TradeFeedNotification,
+  type TradeFeedRemoveResult,
+  type TradeFeedSettingsInput,
+  type TradeFeedTradersPagination,
   type TrackerResponse,
   type WalletLookupResponse,
 } from './types';
@@ -60,6 +70,7 @@ import { USER_AGENT, env, sleep } from './util';
 export const DEFAULT_BASE_URL = 'https://api-id.cabalspy.xyz/v1';
 export const DEFAULT_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/stream';
 export const DEFAULT_THESES_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/theses/stream';
+export const DEFAULT_TRADE_FEED_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/trade-feed/stream';
 
 export interface CabalSpyIDOptions {
   /**
@@ -78,6 +89,8 @@ export interface CabalSpyIDOptions {
   streamUrl?: string;
   /** Theses stream URL. Default: wss://api-id.cabalspy.xyz/v1/theses/stream */
   thesesStreamUrl?: string;
+  /** Trade Feed stream URL. Default: wss://api-id.cabalspy.xyz/v1/trade-feed/stream */
+  tradeFeedStreamUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30_000 */
   timeout?: number;
   /** Retries on 429, 5xx and network errors. Default: 2 */
@@ -245,6 +258,20 @@ export interface DeleteThesisParams extends ThesisWriter {
   thesis_id: string;
 }
 
+// -- Trade Feed ----------------------------------------------------------------
+
+export interface TradeFeedPageParams {
+  /** Page size. /trade-feed: 1-100 (default 30); /traders: 1-300 (default 100); /notifications: 1-100 (default 50). */
+  limit?: number;
+  /** The `next_cursor` of the previous page. */
+  cursor?: string;
+}
+
+export interface TradeFeedParams extends TradeFeedPageParams {
+  /** Default: all */
+  filter?: TradeFeedFilter;
+}
+
 function buildQuery(params: Query): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -315,6 +342,7 @@ export class CabalSpyID {
   readonly baseUrl: string;
   readonly streamUrl: string;
   readonly thesesStreamUrl: string;
+  readonly tradeFeedStreamUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
   readonly instance?: string;
@@ -332,6 +360,7 @@ export class CabalSpyID {
     this.baseUrl = (options.baseUrl ?? (env('CABALSPY_ID_BASE_URL') || DEFAULT_BASE_URL)).replace(/\/+$/, '');
     this.streamUrl = (options.streamUrl ?? (env('CABALSPY_ID_STREAM_URL') || DEFAULT_STREAM_URL)).replace(/\/+$/, '');
     this.thesesStreamUrl = (options.thesesStreamUrl ?? DEFAULT_THESES_STREAM_URL).replace(/\/+$/, '');
+    this.tradeFeedStreamUrl = (options.tradeFeedStreamUrl ?? DEFAULT_TRADE_FEED_STREAM_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.extraHeaders = options.headers ?? {};
@@ -770,7 +799,119 @@ export class CabalSpyID {
     return this.post<{ deleted: true }>('/theses/delete', { ...params });
   }
 
+  // -- Trade Feed --------------------------------------------------------------
+  // In the name of one of your users (`csid_id`, the `sub` of their ID token):
+  // they must have signed in to an app of your instance with the scope
+  // `trade_feed`, else PermissionError `consent_required`.
+
+  /**
+   * GET /v1/trade-feed — the user's Trade Feed: trades (labelled new / add /
+   * partial / close, with realized PnL of sells) and theses of the traders in
+   * it, newest first.
+   */
+  async tradeFeed(csidId: string, params: TradeFeedParams = {}): Promise<TradeFeedItem[]> {
+    return (await this.tradeFeedRaw(csidId, params)).data;
+  }
+
+  async tradeFeedRaw(csidId: string, params: TradeFeedParams = {}): Promise<Envelope<TradeFeedItem[]>> {
+    assertRequired(csidId, 'csid_id');
+    assertOneOf(params.filter, TRADE_FEED_FILTERS, 'filter');
+    return this.getRaw<TradeFeedItem[]>('/trade-feed', { csid_id: csidId, ...params });
+  }
+
+  /** Iterates over the whole Trade Feed, newest first, following `next_cursor`. */
+  async *iterTradeFeed(csidId: string, params: TradeFeedParams = {}): AsyncGenerator<TradeFeedItem, void, void> {
+    for await (const page of this.pages((cursor) => this.tradeFeedRaw(csidId, { ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /** GET /v1/trade-feed/traders — the traders in the user's Trade Feed with their settings, newest first. */
+  async tradeFeedTraders(csidId: string, params: TradeFeedPageParams = {}): Promise<TradeFeedEntry[]> {
+    return (await this.tradeFeedTradersRaw(csidId, params)).data;
+  }
+
+  /** Like tradeFeedTraders(); `pagination.total` is the Trade Feed's size, `pagination.max` its maximum (300). */
+  async tradeFeedTradersRaw(
+    csidId: string,
+    params: TradeFeedPageParams = {},
+  ): Promise<Envelope<TradeFeedEntry[]> & { pagination?: TradeFeedTradersPagination }> {
+    assertRequired(csidId, 'csid_id');
+    return this.getRaw<TradeFeedEntry[]>('/trade-feed/traders', { csid_id: csidId, ...params }) as Promise<
+      Envelope<TradeFeedEntry[]> & { pagination?: TradeFeedTradersPagination }
+    >;
+  }
+
+  /** Iterates over every trader in the user's Trade Feed. */
+  async *iterTradeFeedTraders(csidId: string, params: TradeFeedPageParams = {}): AsyncGenerator<TradeFeedEntry, void, void> {
+    for await (const page of this.pages((cursor) => this.tradeFeedTradersRaw(csidId, { ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /**
+   * POST /v1/trade-feed/traders — adds a trader (handle with or without @, or
+   * csid_id) to the user's Trade Feed; for a trader already there, updates the
+   * given settings. `created` tells which (HTTP 201 / 200).
+   *
+   * Errors: `trader_not_found` (NotFoundError), `cannot_add_self` (BadRequestError),
+   * `trading_private` (PermissionError), `trade_feed_full` (409, CabalSpyIDError),
+   * `rate_limited` (RateLimitError), `consent_required` (PermissionError).
+   */
+  async addToTradeFeed(csidId: string, trader: string, settings: TradeFeedSettingsInput = {}): Promise<TradeFeedAddResult> {
+    assertRequired(csidId, 'csid_id');
+    assertRequired(trader, 'trader');
+    return this.post<TradeFeedAddResult>('/trade-feed/traders', { ...settings, csid_id: csidId, trader });
+  }
+
+  /** POST /v1/trade-feed/traders/delete — removes a trader; `removed: false` when they were not there. */
+  async removeFromTradeFeed(csidId: string, trader: string): Promise<TradeFeedRemoveResult> {
+    assertRequired(csidId, 'csid_id');
+    assertRequired(trader, 'trader');
+    return this.post<TradeFeedRemoveResult>('/trade-feed/traders/delete', { csid_id: csidId, trader });
+  }
+
+  /**
+   * GET /v1/trade-feed/notifications — the user's recent Trade Feed events (the
+   * ones that passed their filters), newest first. For platforms without webhooks.
+   */
+  async tradeFeedNotifications(csidId: string, params: TradeFeedPageParams = {}): Promise<TradeFeedNotification[]> {
+    return (await this.tradeFeedNotificationsRaw(csidId, params)).data;
+  }
+
+  async tradeFeedNotificationsRaw(csidId: string, params: TradeFeedPageParams = {}): Promise<Envelope<TradeFeedNotification[]>> {
+    assertRequired(csidId, 'csid_id');
+    return this.getRaw<TradeFeedNotification[]>('/trade-feed/notifications', { csid_id: csidId, ...params });
+  }
+
+  /** Iterates over the user's Trade Feed notifications, newest first. */
+  async *iterTradeFeedNotifications(
+    csidId: string,
+    params: TradeFeedPageParams = {},
+  ): AsyncGenerator<TradeFeedNotification, void, void> {
+    for await (const page of this.pages((cursor) => this.tradeFeedNotificationsRaw(csidId, { ...params, cursor }), {
+      cursor: params.cursor,
+    })) {
+      yield* page.data;
+    }
+  }
+
   // ── stream ────────────────────────────────────────────────────────────────
+
+  /**
+   * Live Trade Feed events of your users (every plan): `trade_feed.trade` and
+   * `trade_feed.thesis` with `data.recipients`, like the webhooks.
+   *
+   *   const tf = csid.tradeFeedStream();
+   *   tf.on('trade_feed.trade', (e) => notify(e.recipients, e));
+   *   await tf.connect();
+   */
+  tradeFeedStream(options: TradeFeedStreamOptions = {}): TradeFeedStream {
+    if (!this.apiKey) {
+      throw new AuthenticationError('The Trade Feed stream needs an API key.', { status: 401, code: 'missing_api_key' });
+    }
+    return new TradeFeedStream(this.tradeFeedStreamUrl, this.apiKey, { instance: this.instance, ...options });
+  }
 
   /**
    * Live trades of your users over WebSocket (Pro plan and up).

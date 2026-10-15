@@ -4,10 +4,12 @@
  * - CabalSpyID:       Data API client (https://api-id.cabalspy.xyz/v1) and live stream
  * - CabalSpyIDAuth:   "Login with CabalSpy ID" (OpenID Connect, PKCE, ID token verification)
  * - ThesisClient:     public token thesis API for browsers (user access token) and live()
+ * - TradeFeedStream:  live Trade Feed events of your users (trade_feed.trade / trade_feed.thesis)
  * - verifyWebhook:    Standard Webhooks signature verification
- * - cabalspy-id/react: <CabalSpyLogin />, <CabalSpyTheses /> and useCabalSpyID()
+ * - cabalspy-id/react: <CabalSpyLogin />, <CabalSpyTheses />, <TradeFeedButton />, <TradeFeed /> and useCabalSpyID()
  *
- * Focused entry points: cabalspy-id/api, cabalspy-id/thesis, cabalspy-id/widget (browser).
+ * Focused entry points: cabalspy-id/api, cabalspy-id/thesis, cabalspy-id/trade-feed,
+ * cabalspy-id/widget (browser).
  *
  * Docs: https://docs.cabalspy.xyz/cabalspy-id
  */
@@ -17,6 +19,7 @@ export {
   DEFAULT_BASE_URL,
   DEFAULT_STREAM_URL,
   DEFAULT_THESES_STREAM_URL,
+  DEFAULT_TRADE_FEED_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -40,7 +43,18 @@ export {
   type ReactToThesisParams,
   type ReportThesisParams,
   type DeleteThesisParams,
+  type TradeFeedParams,
+  type TradeFeedPageParams,
 } from './client';
+
+export {
+  TradeFeedStream,
+  TRADE_FEED_EVENTS,
+  type TradeFeedStreamOptions,
+  type TradeFeedStreamEvent,
+  type TradeFeedStreamEventMap,
+  type TradeFeedReadyEvent,
+} from './tradeFeedStream';
 
 export {
   CabalSpyIDStream,
@@ -101,7 +115,18 @@ export {
 
 export { decodeJwt, JwksCache, type EcJwk, type Jwks, type JwtHeader, type DecodedJwt } from './jwt';
 
-export { verifyWebhook, signWebhook, type VerifyWebhookOptions, type HeaderSource } from './webhooks';
+export {
+  verifyWebhook,
+  signWebhook,
+  isTradeFeedEvent,
+  isTradeFeedTradeEvent,
+  isTradeFeedThesisEvent,
+  type VerifyWebhookOptions,
+  type HeaderSource,
+  type TradeFeedEvent,
+  type TradeFeedTradeEvent,
+  type TradeFeedThesisEvent,
+} from './webhooks';
 
 export {
   CabalSpyIDError,

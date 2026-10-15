@@ -1,6 +1,6 @@
 {
   "name": "cabalspy-id",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "SocialFi API & SDK for CabalSpy ID — add a social layer to any app: login with X + verified wallets, live trades and PnL of your users, token theses, leaderboards and copy trading on Solana, BNB Chain, Base, Ethereum and Robinhood Chain.",
   "keywords": [
     "socialfi",
@@ -9,6 +9,7 @@
     "socialfi-widget",
     "social-trading",
     "copy-trading",
+    "trade-feed",
     "crypto-social",
     "web3-social",
     "kol",
@@ -58,6 +59,11 @@
       "import": "./dist/thesis.js",
       "require": "./dist/thesis.cjs"
     },
+    "./trade-feed": {
+      "types": "./dist/trade-feed.d.ts",
+      "import": "./dist/trade-feed.js",
+      "require": "./dist/trade-feed.cjs"
+    },
     "./widget": {
       "types": "./dist/widget.d.ts",
       "import": "./dist/widget.js",
@@ -82,6 +88,9 @@
       ],
       "thesis": [
         "./dist/thesis.d.ts"
+      ],
+      "trade-feed": [
+        "./dist/trade-feed.d.ts"
       ],
       "widget": [
         "./dist/widget.d.ts"

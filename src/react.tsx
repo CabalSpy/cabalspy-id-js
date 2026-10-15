@@ -1,10 +1,13 @@
 /**
- * React bindings for "Login with CabalSpy ID" and the token theses widget.
+ * React bindings for "Login with CabalSpy ID", the token theses widget and the
+ * Trade Feed widgets.
  *
- *   import { CabalSpyLogin, CabalSpyTheses, useCabalSpyID } from 'cabalspy-id/react';
+ *   import { CabalSpyLogin, CabalSpyTheses, TradeFeedButton, TradeFeed, useCabalSpyID } from 'cabalspy-id/react';
  *
  *   <CabalSpyLogin clientId="csid_…" onLogin={({ idToken }) => sendToBackend(idToken)} />
- *   <CabalSpyTheses chain="solana" mint={mint} />
+ *   <CabalSpyTheses chain="solana" mint={mint} clientId="csid_…" />
+ *   <TradeFeedButton trader="handle" clientId="csid_…" />
+ *   <TradeFeed clientId="csid_…" filter="buys" />
  *
  * Loads https://id.cabalspy.xyz/widget.js once and maps props to its data-*
  * attributes (the same mapping as `cabalspy-id/widget`). Always verify `idToken`
@@ -22,12 +25,17 @@ import {
   type LoginButtonOptions,
   type ThesisSignInHandler,
   type ThesisWidgetOptions,
+  type TradeFeedButtonOptions,
+  type TradeFeedSignInHandler,
+  type TradeFeedWidgetOptions,
   isBrowser,
   loadCabalSpyIDWidget,
   loginButtonAttributes,
   onWidgetEvents,
   setThesisSignInHandler,
   thesisWidgetAttributes,
+  tradeFeedButtonAttributes,
+  tradeFeedWidgetAttributes,
 } from './widget';
 
 export {
@@ -41,6 +49,10 @@ export {
   type LoginButtonOptions,
   type ThesisSignInHandler,
   type ThesisWidgetOptions,
+  type TradeFeedButtonOptions,
+  type TradeFeedDesignOptions,
+  type TradeFeedSignInHandler,
+  type TradeFeedWidgetOptions,
 } from './widget';
 
 // ── <CabalSpyLogin /> ─────────────────────────────────────────────────────────
@@ -128,8 +140,73 @@ export interface CabalSpyThesesProps extends ThesisWidgetOptions {
  *   <CabalSpyTheses chain="solana" mint={mint} clientId="csid_..." theme="dark" accessToken={accessToken} />
  */
 export function CabalSpyTheses(props: CabalSpyThesesProps) {
+  return useSignedInWidget(props, thesisWidgetAttributes(props));
+}
+
+// ── <TradeFeedButton /> and <TradeFeed /> ──────────────────────────────────────
+
+interface SignedInWidgetProps {
+  accessToken?: string | null;
+  onSignIn?: ThesisSignInHandler;
+  scriptSrc?: string;
+  className?: string;
+  style?: CSSProperties;
+  id?: string;
+}
+
+export interface TradeFeedButtonProps extends TradeFeedButtonOptions {
+  /**
+   * The signed-in user's CabalSpy ID access token (scope `trade_feed`), so
+   * they add the trader without signing in again. Shared with the theses
+   * widgets. `null` signs the widgets out.
+   */
+  accessToken?: string | null;
+  /**
+   * Your own sign-in (instead of the page's login button / popup): get an
+   * access token with the scope `trade_feed`, pass it on (the `accessToken`
+   * prop or `setTradeFeedAccessToken`) and resolve `true`; `false` when the
+   * person is not signed in. Removed on unmount. Shared with the theses widgets.
+   */
+  onSignIn?: TradeFeedSignInHandler;
+  scriptSrc?: string;
+  className?: string;
+  style?: CSSProperties;
+  id?: string;
+}
+
+/**
+ * "+ Trade Feed" button for one trader: adds them to the signed-in person's
+ * Trade Feed (or removes them), with the number of Trade Feeds they are in.
+ *
+ *   <TradeFeedButton trader="handle" clientId="csid_..." accessToken={accessToken} />
+ */
+export function TradeFeedButton(props: TradeFeedButtonProps) {
+  return useSignedInWidget(props, tradeFeedButtonAttributes(props));
+}
+
+export interface TradeFeedProps extends TradeFeedWidgetOptions {
+  /** The signed-in user's access token (scope `trade_feed`); see {@link TradeFeedButtonProps.accessToken}. */
+  accessToken?: string | null;
+  /** Your own sign-in; see {@link TradeFeedButtonProps.onSignIn}. */
+  onSignIn?: TradeFeedSignInHandler;
+  scriptSrc?: string;
+  className?: string;
+  style?: CSSProperties;
+  id?: string;
+}
+
+/**
+ * The signed-in person's Trade Feed, live: trades and theses of the traders in it.
+ *
+ *   <TradeFeed clientId="csid_..." filter="all" maxHeight={600} onSignIn={signIn} />
+ */
+export function TradeFeed(props: TradeFeedProps) {
+  return useSignedInWidget(props, tradeFeedWidgetAttributes(props));
+}
+
+/** Mounts a widget that shares the page's thesis / Trade Feed sign-in (accessToken, onSignIn). */
+function useSignedInWidget(props: SignedInWidgetProps, attrs: Record<string, string | undefined>) {
   const { accessToken, scriptSrc, onSignIn } = props;
-  const attrs = thesisWidgetAttributes(props);
   const key = JSON.stringify(attrs);
   const signIn = useRef(onSignIn);
   signIn.current = onSignIn;

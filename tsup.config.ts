@@ -6,6 +6,7 @@ export default defineConfig([
       index: 'src/index.ts',
       api: 'src/entries/api.ts',
       thesis: 'src/entries/thesis.ts',
+      'trade-feed': 'src/entries/tradeFeed.ts',
       widget: 'src/widget.ts',
     },
     format: ['esm', 'cjs'],

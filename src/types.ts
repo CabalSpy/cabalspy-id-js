@@ -453,8 +453,12 @@ export interface Trade {
  * `thesis` lets your app post theses and replies, react and report in the
  * user's name (Data API writes with `csid_id`, or the public thesis API and
  * the thesis widget with the user's access token).
+ *
+ * `trade_feed` lets your app manage the user's Trade Feed (add and remove
+ * traders, read the feed and its notifications, the Trade Feed widgets) and
+ * makes them a recipient of `trade_feed.*` webhooks and stream events.
  */
-export type OidcScope = 'openid' | 'profile' | 'wallets' | 'onchain' | 'thesis' | 'offline_access';
+export type OidcScope = 'openid' | 'profile' | 'wallets' | 'onchain' | 'thesis' | 'trade_feed' | 'offline_access';
 
 export interface XProfileClaim {
   id: string;
@@ -555,6 +559,8 @@ export type WebhookEventType =
   | 'thesis.created'
   | 'thesis.reply'
   | 'thesis.reaction'
+  | 'trade_feed.trade'
+  | 'trade_feed.thesis'
   | 'webhook.test';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
@@ -563,7 +569,10 @@ export interface WebhookEvent<D = Record<string, unknown>> {
   type: WebhookEventType | string;
   created_at: string;
   sandbox: boolean;
-  /** Always carries `sub` (the user's CabalSpy ID), except for webhook.test. */
+  /**
+   * Carries `sub` (the user's CabalSpy ID), except for webhook.test and the
+   * Trade Feed events (`trade_feed.*` list the users to tell in `data.recipients`).
+   */
   data: D & { sub?: string };
 }
 
@@ -764,3 +773,194 @@ export interface ThesisRemoved {
 }
 /** Stream / live payload of changed reaction counts. */
 export type ThesisReactionUpdate = ThesisReactions & { blockchain?: Chain; mint?: string };
+
+// ── Trade Feed ──────────────────────────────────────────────────────────────
+
+/** `filter` of a Trade Feed. */
+export const TRADE_FEED_FILTERS = ['all', 'buys', 'sells', 'theses'] as const;
+export type TradeFeedFilter = (typeof TRADE_FEED_FILTERS)[number];
+
+/** At most this many traders in one person's Trade Feed. */
+export const TRADE_FEED_MAX_TRADERS = 300;
+
+/**
+ * What a trade did to the trader's position in the token:
+ * `new` (first buy, or a buy after the position was closed), `add` (bought more),
+ * `partial` (sold `sold_percent` of the position), `close` (sold the rest),
+ * `sell` (a sell without a known entry).
+ */
+export type TradeFeedLabel = 'new' | 'add' | 'partial' | 'close' | 'sell';
+
+/** A trader as everyone may see them. */
+export interface TradeFeedTrader {
+  csid_id: string;
+  /** X handle; for people without X `tg.<telegram name>` or `id.<hex>`. */
+  username: string;
+  name: string | null;
+  image_url: string | null;
+  /** Has the KOL badge. */
+  kol: boolean;
+  /** https://id.cabalspy.xyz/u/<username> */
+  profile_url: string | null;
+}
+
+/** A trade of a trader in a Trade Feed. */
+export interface TradeFeedTrade {
+  blockchain: Chain;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  side: 'buy' | 'sell';
+  label: TradeFeedLabel;
+  /** `partial` sells: the share of the position sold, 0-100. */
+  sold_percent: number | null;
+  /** Size in the chain's native coin (`currency`). */
+  amount_native: number;
+  currency: Currency | null;
+  amount_usd: number | null;
+  token_amount: number | null;
+  price_usd: number | null;
+  /** Sells with a known entry: realized PnL of this sell. */
+  pnl_usd: number | null;
+  pnl_percent: number | null;
+  /** The trader's verified wallet (verified wallets are public). */
+  wallet: string;
+  /** The wallet on the chain's explorer. */
+  wallet_url: string | null;
+  tx_signature: string;
+  tx_url: string | null;
+}
+
+/** A thesis of a trader in a Trade Feed. */
+export interface TradeFeedThesis {
+  id: string;
+  blockchain: Chain;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  stance: ThesisStance | null;
+  body: string;
+  likes: number;
+  replies: number;
+  /** The token's theses on CabalSpy ID. */
+  url: string;
+}
+
+export interface TradeFeedLinks {
+  /** CabalSpy Terminal (Solana, BNB), else the token's theses. */
+  token: string;
+  /** CabalSpy Terminal chart; `null` on chains it does not cover. */
+  terminal: string | null;
+  /** The trader's CabalSpy ID profile. */
+  profile: string | null;
+}
+
+interface TradeFeedItemBase {
+  /** Stable id of the trade (`t…`) or thesis (`h…`): dedupe on it. */
+  id: string;
+  /** ISO 8601, UTC. */
+  timestamp: string;
+  trader: TradeFeedTrader;
+  links: TradeFeedLinks;
+  /** Feed pages only: this item's position (pass it as `cursor` to read on from here). */
+  cursor?: string;
+}
+
+export interface TradeFeedTradeItem extends TradeFeedItemBase {
+  type: 'trade';
+  trade: TradeFeedTrade;
+}
+
+export interface TradeFeedThesisItem extends TradeFeedItemBase {
+  type: 'thesis';
+  thesis: TradeFeedThesis;
+}
+
+/** One entry of a Trade Feed (and, plus `recipients`, the payload of `trade_feed.*` events). */
+export type TradeFeedItem = TradeFeedTradeItem | TradeFeedThesisItem;
+
+/** What a person is told about one trader. */
+export interface TradeFeedSettings {
+  notify_buys: boolean;
+  notify_sells: boolean;
+  notify_theses: boolean;
+  /** Minimum trade size per native coin (0 = every trade). */
+  min_native: Record<Currency, number>;
+  /** Muted: still in the feed, but no notifications. */
+  muted: boolean;
+}
+
+/**
+ * Settings when adding a trader (or updating one already in the Trade Feed).
+ * Omitted fields keep their value; a new trader starts with the person's defaults.
+ */
+export interface TradeFeedSettingsInput {
+  notify_buys?: boolean;
+  notify_sells?: boolean;
+  notify_theses?: boolean;
+  /** Minimum trade size in SOL (0 = every trade). */
+  min_sol?: number;
+  /** Minimum trade size in BNB. */
+  min_bnb?: number;
+  /** Minimum trade size in ETH (Base, Ethereum, Robinhood Chain). */
+  min_eth?: number;
+  muted?: boolean;
+}
+
+/** A trader in a person's Trade Feed. */
+export interface TradeFeedEntry {
+  trader: TradeFeedTrader;
+  /** false while the trader keeps their trading private (nothing of them shows up then). */
+  trading_public: boolean;
+  added_at: string;
+  /** In how many Trade Feeds this trader is. */
+  in_trade_feeds: number;
+  settings: TradeFeedSettings;
+}
+
+/** Pagination of /trade-feed/traders, with the Trade Feed's size and maximum. */
+export interface TradeFeedTradersPagination extends Pagination {
+  total: number;
+  max: number;
+}
+
+/** Result of adding a trader. */
+export interface TradeFeedAddResult {
+  in_trade_feed: true;
+  /** false: the trader was already there (settings, if given, were updated). */
+  created: boolean;
+  trader: TradeFeedTrader;
+  settings: TradeFeedSettings;
+}
+
+/** Result of removing a trader. */
+export interface TradeFeedRemoveResult {
+  in_trade_feed: false;
+  /** false: the trader was not in the Trade Feed. */
+  removed: boolean;
+}
+
+export type TradeFeedEventType = 'trade_feed.trade' | 'trade_feed.thesis';
+
+/** A Trade Feed event of one person (one that passed their filters). */
+export interface TradeFeedNotification {
+  id: number;
+  event: TradeFeedEventType;
+  /** One plain-text line, e.g. "Trade Feed: @handle bought $SYM — 1.2 SOL ($240) · new position". */
+  text: string;
+  created_at: string;
+  data: TradeFeedItem;
+}
+
+/** Your users who should hear about an event (their `csid_id`s). */
+export interface TradeFeedRecipients {
+  recipients: string[];
+}
+
+/** `data` of a `trade_feed.trade` webhook or stream event. */
+export type TradeFeedTradeData = Omit<TradeFeedTradeItem, 'cursor'> & TradeFeedRecipients;
+/** `data` of a `trade_feed.thesis` webhook or stream event. */
+export type TradeFeedThesisData = Omit<TradeFeedThesisItem, 'cursor'> & TradeFeedRecipients;
+export type TradeFeedEventData = TradeFeedTradeData | TradeFeedThesisData;

@@ -44,3 +44,25 @@ console.log(`smoke ok on Node ${process.version} (SDK ${esm.SDK_VERSION})`);
   assert.equal(new (require('cabalspy-id/api').NotFoundError)('x') instanceof rootCjs.CabalSpyIDError, true);
   console.log('subpath exports ok');
 }
+
+// cabalspy-id/trade-feed (0.6.0): same classes as the root export, widgets in cabalspy-id/widget.
+{
+  const require = createRequire(import.meta.url);
+  const rootEsm = await import('cabalspy-id');
+  const tfEsm = await import('cabalspy-id/trade-feed');
+  const tfCjs = require('cabalspy-id/trade-feed');
+  const rootCjs = require('cabalspy-id');
+  assert.equal(tfEsm.CabalSpyID, rootEsm.CabalSpyID);
+  assert.equal(tfEsm.TradeFeedStream, rootEsm.TradeFeedStream);
+  assert.equal(tfCjs.TradeFeedStream, rootCjs.TradeFeedStream);
+  assert.equal(tfCjs.CabalSpyIDError, rootCjs.CabalSpyIDError);
+  assert.equal(typeof (await import('cabalspy-id/api')).TradeFeedStream, 'function');
+  assert.equal(tfEsm.isTradeFeedTradeEvent({ type: 'trade_feed.trade' }), true);
+  const csid = new tfEsm.CabalSpyID({ apiKey: 'k' });
+  assert.equal(typeof csid.tradeFeed, 'function');
+  assert.match(csid.tradeFeedStream().safeUrl, /^wss:\/\/api-id\.cabalspy\.xyz\/v1\/trade-feed\/stream\?api_key=\*\*\*$/);
+  const widget = await import('cabalspy-id/widget');
+  assert.equal(widget.tradeFeedWidgetAttributes({ clientId: 'csid_x' })['data-csid-trade-feed'], '');
+  assert.equal(widget.tradeFeedButtonAttributes({ trader: 'a', clientId: 'csid_x' })['data-trader'], 'a');
+  console.log('trade-feed exports ok');
+}

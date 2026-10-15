@@ -3,7 +3,16 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CabalSpyLogin, CabalSpyTheses, WIDGET_SRC, useCabalSpyID, type CabalSpyIDLogin, type UseCabalSpyIDResult } from '../src/react';
+import {
+  CabalSpyLogin,
+  CabalSpyTheses,
+  TradeFeed,
+  TradeFeedButton,
+  WIDGET_SRC,
+  useCabalSpyID,
+  type CabalSpyIDLogin,
+  type UseCabalSpyIDResult,
+} from '../src/react';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -254,5 +263,44 @@ describe('<CabalSpyTheses /> design props', () => {
       compact: 'true',
       height: '400',
     });
+  });
+});
+
+describe('<TradeFeedButton /> and <TradeFeed />', () => {
+  it('render the Trade Feed elements, mount them and pass the access token', async () => {
+    await act(async () => {
+      root.render(
+        <>
+          <TradeFeedButton trader="alice" clientId="csid_a" size="sm" showCount accessToken="at-tf" />
+          <TradeFeed clientId="csid_a" filter="theses" showFilters={false} maxHeight={500} theme="light" />
+        </>,
+      );
+    });
+    const btn = container.querySelector('[data-csid-trade-feed-button]') as HTMLElement;
+    expect({ ...btn.dataset }).toEqual({ csidTradeFeedButton: '', trader: 'alice', clientId: 'csid_a', size: 'sm', showCount: 'true' });
+    const feed = container.querySelector('[data-csid-trade-feed]') as HTMLElement;
+    expect({ ...feed.dataset }).toEqual({ csidTradeFeed: '', clientId: 'csid_a', theme: 'light', filter: 'theses', showFilters: 'false', maxHeight: '500' });
+    await act(async () => fakeWidgetLoad());
+    expect(mount).toHaveBeenCalled();
+    expect(setAccessToken).toHaveBeenCalledWith('at-tf');
+  });
+
+  it('onSignIn registers the shared sign-in handler and removes it on unmount', async () => {
+    const signIn = vi.fn(async () => true);
+    await act(async () => {
+      root.render(<TradeFeed clientId="csid_a" onSignIn={signIn} />);
+    });
+    await act(async () => fakeWidgetLoad());
+    expect(setSignInHandler).toHaveBeenCalledTimes(1);
+    const registered = setSignInHandler.mock.calls[0]![0] as () => Promise<boolean>;
+    expect(await registered()).toBe(true);
+    await act(async () => root.render(<div />));
+    await act(async () => undefined);
+    expect(setSignInHandler).toHaveBeenLastCalledWith(null);
+  });
+
+  it('throws without clientId', () => {
+    // @ts-expect-error clientId is required
+    expect(() => TradeFeed({})).toThrow(/public client_id/);
   });
 });

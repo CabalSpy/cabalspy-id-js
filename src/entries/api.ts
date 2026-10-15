@@ -1,7 +1,8 @@
 /**
  * `cabalspy-id/api` — the SocialFi API: Data API client (users, profiles,
- * verified wallets, trading stats, leaderboards), the live trade stream, Login
- * with CabalSpy ID (OpenID Connect) and webhook verification.
+ * verified wallets, trading stats, leaderboards, Trade Feed), the live trade
+ * and Trade Feed streams, Login with CabalSpy ID (OpenID Connect) and webhook
+ * verification.
  *
  *   import { CabalSpyID, CabalSpyIDAuth, verifyWebhook } from 'cabalspy-id/api';
  *
@@ -13,6 +14,7 @@ export {
   CabalSpyID,
   DEFAULT_BASE_URL,
   DEFAULT_STREAM_URL,
+  DEFAULT_TRADE_FEED_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -24,7 +26,18 @@ export {
   type HistoryParams,
   type LeaderboardParams,
   type LatestTransactionsParams,
+  type TradeFeedParams,
+  type TradeFeedPageParams,
 } from '../client';
+
+export {
+  TradeFeedStream,
+  TRADE_FEED_EVENTS,
+  type TradeFeedStreamOptions,
+  type TradeFeedStreamEvent,
+  type TradeFeedStreamEventMap,
+  type TradeFeedReadyEvent,
+} from '../tradeFeedStream';
 
 export {
   CabalSpyIDStream,
@@ -55,7 +68,18 @@ export {
 
 export { decodeJwt, JwksCache, type EcJwk, type Jwks, type JwtHeader, type DecodedJwt } from '../jwt';
 
-export { verifyWebhook, signWebhook, type VerifyWebhookOptions, type HeaderSource } from '../webhooks';
+export {
+  verifyWebhook,
+  signWebhook,
+  isTradeFeedEvent,
+  isTradeFeedTradeEvent,
+  isTradeFeedThesisEvent,
+  type VerifyWebhookOptions,
+  type HeaderSource,
+  type TradeFeedEvent,
+  type TradeFeedTradeEvent,
+  type TradeFeedThesisEvent,
+} from '../webhooks';
 
 export * from './errors';
 
@@ -109,4 +133,27 @@ export {
   type DiscoveryDocument,
   type WebhookEventType,
   type WebhookEvent,
+  TRADE_FEED_FILTERS,
+  TRADE_FEED_MAX_TRADERS,
+  type TradeFeedFilter,
+  type TradeFeedLabel,
+  type TradeFeedTrader,
+  type TradeFeedTrade,
+  type TradeFeedThesis,
+  type TradeFeedLinks,
+  type TradeFeedTradeItem,
+  type TradeFeedThesisItem,
+  type TradeFeedItem,
+  type TradeFeedSettings,
+  type TradeFeedSettingsInput,
+  type TradeFeedEntry,
+  type TradeFeedTradersPagination,
+  type TradeFeedAddResult,
+  type TradeFeedRemoveResult,
+  type TradeFeedEventType,
+  type TradeFeedNotification,
+  type TradeFeedRecipients,
+  type TradeFeedTradeData,
+  type TradeFeedThesisData,
+  type TradeFeedEventData,
 } from '../types';
