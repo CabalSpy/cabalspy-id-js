@@ -4,6 +4,40 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-15
+
+Trade Feed: your users add CabalSpy ID traders (public trading, verified wallets) to their Trade
+Feed and your platform tells them about every trade and thesis of those traders. Needs the new
+OIDC scope `trade_feed`. Nothing existing changed.
+
+### Added
+
+- Data API methods in a user's name (`csid_id`; PermissionError `consent_required` without the
+  scope): `tradeFeed(csidId, { filter, limit, cursor })` (+ `tradeFeedRaw`, `iterTradeFeed`),
+  `tradeFeedTraders(csidId, …)` (+ `tradeFeedTradersRaw` with `pagination.total` / `max`,
+  `iterTradeFeedTraders`), `addToTradeFeed(csidId, trader, settings?)` (`created` = 201 / 200),
+  `removeFromTradeFeed(csidId, trader)`, `tradeFeedNotifications(csidId, …)`
+  (+ `tradeFeedNotificationsRaw`, `iterTradeFeedNotifications`).
+- `TradeFeedStream` (`csid.tradeFeedStream()`, `wss://api-id.cabalspy.xyz/v1/trade-feed/stream`,
+  every plan): typed `trade_feed.trade` / `trade_feed.thesis` events with `data.recipients` and the
+  event id, reconnect with backoff, heartbeat watchdog, async iterator. Option `tradeFeedStreamUrl`,
+  constant `DEFAULT_TRADE_FEED_STREAM_URL`.
+- Webhooks `trade_feed.trade` and `trade_feed.thesis` in `WebhookEventType`, payload types
+  (`TradeFeedTradeData`, `TradeFeedThesisData`) and type guards `isTradeFeedEvent`,
+  `isTradeFeedTradeEvent`, `isTradeFeedThesisEvent`.
+- Types: `TradeFeedItem` (trade / thesis), `TradeFeedTrader`, `TradeFeedTrade`, `TradeFeedThesis`,
+  `TradeFeedLinks`, `TradeFeedEntry`, `TradeFeedSettings`, `TradeFeedSettingsInput`,
+  `TradeFeedAddResult`, `TradeFeedRemoveResult`, `TradeFeedNotification`, `TradeFeedFilter`,
+  `TradeFeedLabel`, `TRADE_FEED_FILTERS`, `TRADE_FEED_MAX_TRADERS`; `OidcScope` includes `trade_feed`.
+- Widgets (`cabalspy-id/widget`): `mountTradeFeedButton`, `mountTradeFeed`,
+  `tradeFeedButtonAttributes`, `tradeFeedWidgetAttributes` (`clientId` required),
+  `setTradeFeedAccessToken`, `setTradeFeedSignInHandler`; `CSIDGlobal.tradeFeed`.
+- React (`cabalspy-id/react`): `<TradeFeedButton>` and `<TradeFeed>` with `accessToken` and
+  `onSignIn` (the sign-in is shared with `<CabalSpyTheses>`).
+- New entry point `cabalspy-id/trade-feed` (Data API client, stream, webhook guards, types);
+  `cabalspy-id/api` exports the Trade Feed parts too.
+- Theses widget: `frameless` and `maxHeight` options (`data-frameless`, `data-max-height`).
+
 ## [0.5.2] - 2026-10-15
 
 The public thesis API (`https://id.cabalspy.xyz/thesis/v1/...`) and its live socket
@@ -136,6 +170,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.6.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.4.1...v0.5.0

@@ -9,7 +9,7 @@
 //                      During a secret roll: several, separated by spaces.
 
 import { WebhookVerificationError } from './errors';
-import type { WebhookEvent } from './types';
+import type { TradeFeedThesisData, TradeFeedTradeData, WebhookEvent } from './types';
 import { type Bytes, base64ToBytes, bytesToBase64, fromUtf8, getCrypto, timingSafeEqual, utf8 } from './util';
 
 export type HeaderSource =
@@ -124,4 +124,27 @@ export async function verifyWebhook<D = Record<string, unknown>>(options: Verify
   } catch {
     throw new WebhookVerificationError('Webhook body is not valid JSON', { code: 'invalid_payload' });
   }
+}
+
+// ── Trade Feed events ────────────────────────────────────────────────────────
+
+/** A `trade_feed.trade` webhook: a trader in your users' Trade Feeds traded; `data.recipients` are the users to tell. */
+export type TradeFeedTradeEvent = WebhookEvent<TradeFeedTradeData> & { type: 'trade_feed.trade' };
+/** A `trade_feed.thesis` webhook: a trader in your users' Trade Feeds posted a thesis. */
+export type TradeFeedThesisEvent = WebhookEvent<TradeFeedThesisData> & { type: 'trade_feed.thesis' };
+export type TradeFeedEvent = TradeFeedTradeEvent | TradeFeedThesisEvent;
+
+/** True for a `trade_feed.trade` event (narrows `data` to the trade payload with `recipients`). */
+export function isTradeFeedTradeEvent(event: { type: string }): event is TradeFeedTradeEvent {
+  return event?.type === 'trade_feed.trade';
+}
+
+/** True for a `trade_feed.thesis` event (narrows `data` to the thesis payload with `recipients`). */
+export function isTradeFeedThesisEvent(event: { type: string }): event is TradeFeedThesisEvent {
+  return event?.type === 'trade_feed.thesis';
+}
+
+/** True for any Trade Feed event (`trade_feed.trade` or `trade_feed.thesis`). */
+export function isTradeFeedEvent(event: { type: string }): event is TradeFeedEvent {
+  return isTradeFeedTradeEvent(event) || isTradeFeedThesisEvent(event);
 }

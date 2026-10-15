@@ -1,18 +1,21 @@
 /**
  * CabalSpy ID widgets for any web page (browser only, no framework):
- * the "Sign in with CabalSpy ID" button and the token theses widget.
+ * the "Sign in with CabalSpy ID" button, the token theses widget and the
+ * Trade Feed widgets (the "+ Trade Feed" button and the embedded feed).
  *
- *   import { mountLoginButton, mountTheses } from 'cabalspy-id/widget';
+ *   import { mountLoginButton, mountTheses, mountTradeFeedButton, mountTradeFeed } from 'cabalspy-id/widget';
  *
  *   mountLoginButton('#login', { clientId: 'csid_…', onLogin: ({ idToken }) => sendToBackend(idToken) });
  *   mountTheses('#theses', { chain: 'solana', mint, clientId: 'csid_…', theme: 'dark' });
+ *   mountTradeFeedButton('#add', { trader: 'handle', clientId: 'csid_…' });
+ *   mountTradeFeed('#feed', { clientId: 'csid_…', filter: 'buys' });
  *
  * Loads https://id.cabalspy.xyz/widget.js once and maps options to its data-*
  * attributes. React components: `cabalspy-id/react` (also `cabalspy-id/widget/react`).
  */
 
-import { AuthenticationError } from './errors';
-import type { CabalSpyIDClaims, Chain, OidcScope } from './types';
+import { AuthenticationError, BadRequestError } from './errors';
+import type { CabalSpyIDClaims, Chain, OidcScope, TradeFeedFilter } from './types';
 
 export const WIDGET_SRC = 'https://id.cabalspy.xyz/widget.js';
 
@@ -66,6 +69,11 @@ export interface CSIDGlobal {
     setSignInHandler?(handler: ThesisSignInHandler | null): void;
     clear(): void;
   };
+  /**
+   * Trade Feed widgets on the page (data-csid-trade-feed-button, data-csid-trade-feed):
+   * the same object as `thesis`, one sign-in for both (the token needs the scope `trade_feed`).
+   */
+  tradeFeed?: CSIDGlobal['thesis'];
 }
 
 /**
@@ -76,6 +84,9 @@ export interface CSIDGlobal {
  * the person is not signed in.
  */
 export type ThesisSignInHandler = () => Promise<boolean> | boolean;
+
+/** Your page's sign-in for the Trade Feed widgets: the same contract as {@link ThesisSignInHandler}, with the scope `trade_feed`. */
+export type TradeFeedSignInHandler = ThesisSignInHandler;
 
 declare global {
   interface Window {
@@ -209,8 +220,78 @@ export interface ThesisWidgetOptions {
   showSentiment?: boolean;
   /** Denser layout. Default: false */
   compact?: boolean;
+  /** No frame of its own (transparent, no rounding): your page's card is the frame. */
+  frameless?: boolean;
   /** Initial height in px; the widget then sizes itself to its content. Default: 520 */
   height?: number;
+  /** Height cap in px; the widget scrolls beyond it. */
+  maxHeight?: number;
+}
+
+/** Design of the Trade Feed widgets (defaults: the design saved in the dashboard). */
+export interface TradeFeedDesignOptions {
+  /** Default: dark */
+  theme?: 'dark' | 'light';
+  /** Font family, e.g. "Inter". */
+  font?: string;
+  /** Corner radius in px. */
+  radius?: number;
+  /** Colors (CSS colors, e.g. "#0d0f12"). */
+  bg?: string;
+  card?: string;
+  text?: string;
+  muted?: string;
+  border?: string;
+  accent?: string;
+  accentText?: string;
+  /** Buys / bullish. */
+  bull?: string;
+  /** Sells / bearish. */
+  bear?: string;
+  /** Denser layout. */
+  compact?: boolean;
+  /** No frame of its own (transparent, no rounding): your page's card is the frame. */
+  frameless?: boolean;
+}
+
+/** The "+ Trade Feed" button for one trader. */
+export interface TradeFeedButtonOptions extends TradeFeedDesignOptions {
+  /** The trader: X handle (with or without @) or csid_id. */
+  trader: string;
+  /**
+   * Required. Your instance's PUBLIC client_id (`csid_...`, shown in the
+   * dashboard next to the API key; not the API key). The Trade Feed widgets
+   * work on your instance's sites (allowed origins).
+   */
+  clientId: string;
+  /** Default: md */
+  size?: 'sm' | 'md' | 'lg';
+  /** Show in how many Trade Feeds the trader is. Default: true */
+  showCount?: boolean;
+  /** Width in px (or a CSS width). Default: 290, 170 without the count. */
+  width?: number | string;
+  /** Height in px. Default: by size (36 / 42 / 50). */
+  height?: number;
+}
+
+/** The signed-in person's Trade Feed, live. */
+export interface TradeFeedWidgetOptions extends TradeFeedDesignOptions {
+  /**
+   * Required. Your instance's PUBLIC client_id (`csid_...`, shown in the
+   * dashboard next to the API key; not the API key). The Trade Feed widgets
+   * work on your instance's sites (allowed origins).
+   */
+  clientId: string;
+  /** Initial filter. Default: all */
+  filter?: TradeFeedFilter;
+  /** Show the header. Default: true */
+  showHeader?: boolean;
+  /** Show the filter tabs. Default: true */
+  showFilters?: boolean;
+  /** Initial height in px; the widget then sizes itself to its content. Default: 520 */
+  height?: number;
+  /** Height cap in px; the widget scrolls beyond it. */
+  maxHeight?: number;
 }
 
 /** The widget's data-* attributes for a login button. */
@@ -234,15 +315,20 @@ export function loginButtonAttributes(o: LoginButtonOptions): Record<string, str
   };
 }
 
-/** The widget's data-* attributes for a theses widget. Throws `client_id_required` without `clientId`. */
-export function thesisWidgetAttributes(o: ThesisWidgetOptions): Record<string, string | undefined> {
-  if (typeof o?.clientId !== 'string' || !o.clientId.trim()) {
+function requireClientId(clientId: unknown, widget: string): string {
+  if (typeof clientId !== 'string' || !clientId.trim()) {
     throw new AuthenticationError(
-      "The theses widget needs your instance's public client_id (csid_..., shown in the dashboard next to the API key): " +
+      `The ${widget} needs your instance's public client_id (csid_..., shown in the dashboard next to the API key): ` +
         "{ clientId: 'csid_...' }. It is not the API key; never put the API key in a browser.",
       { code: 'client_id_required', parameter: 'clientId', docs: 'https://docs.cabalspy.xyz/cabalspy-id/errors#client_id_required' },
     );
   }
+  return clientId.trim();
+}
+
+/** The widget's data-* attributes for a theses widget. Throws `client_id_required` without `clientId`. */
+export function thesisWidgetAttributes(o: ThesisWidgetOptions): Record<string, string | undefined> {
+  requireClientId(o?.clientId, 'theses widget');
   return {
     'data-csid-thesis': '',
     'data-chain': o.chain,
@@ -265,7 +351,67 @@ export function thesisWidgetAttributes(o: ThesisWidgetOptions): Record<string, s
     'data-show-header': bool(o.showHeader),
     'data-show-sentiment': bool(o.showSentiment),
     'data-compact': bool(o.compact),
+    'data-frameless': bool(o.frameless),
     'data-height': num(o.height),
+    'data-max-height': num(o.maxHeight),
+  };
+}
+
+function designAttributes(o: TradeFeedDesignOptions): Record<string, string | undefined> {
+  return {
+    'data-theme': o.theme,
+    'data-font': o.font,
+    'data-radius': num(o.radius),
+    'data-bg': o.bg,
+    'data-card': o.card,
+    'data-text': o.text,
+    'data-muted': o.muted,
+    'data-border': o.border,
+    'data-accent': o.accent,
+    'data-accent-text': o.accentText,
+    'data-bull': o.bull,
+    'data-bear': o.bear,
+    'data-compact': bool(o.compact),
+    'data-frameless': bool(o.frameless),
+  };
+}
+
+/**
+ * The widget's data-* attributes for a "+ Trade Feed" button. Throws
+ * `client_id_required` without `clientId` and `missing_parameter` without `trader`.
+ */
+export function tradeFeedButtonAttributes(o: TradeFeedButtonOptions): Record<string, string | undefined> {
+  const clientId = requireClientId(o?.clientId, 'Trade Feed button');
+  if (typeof o.trader !== 'string' || !o.trader.trim()) {
+    throw new BadRequestError("The Trade Feed button needs { trader: '<handle or csid_id>' }.", {
+      code: 'missing_parameter',
+      parameter: 'trader',
+    });
+  }
+  return {
+    'data-csid-trade-feed-button': '',
+    'data-trader': o.trader.trim(),
+    'data-client-id': clientId,
+    ...designAttributes(o),
+    'data-size': o.size,
+    'data-show-count': bool(o.showCount),
+    'data-width': o.width === undefined ? undefined : String(o.width),
+    'data-height': num(o.height),
+  };
+}
+
+/** The widget's data-* attributes for the embedded Trade Feed. Throws `client_id_required` without `clientId`. */
+export function tradeFeedWidgetAttributes(o: TradeFeedWidgetOptions): Record<string, string | undefined> {
+  const clientId = requireClientId(o?.clientId, 'Trade Feed widget');
+  return {
+    'data-csid-trade-feed': '',
+    'data-client-id': clientId,
+    ...designAttributes(o),
+    'data-filter': o.filter,
+    'data-show-header': bool(o.showHeader),
+    'data-show-filters': bool(o.showFilters),
+    'data-height': num(o.height),
+    'data-max-height': num(o.maxHeight),
   };
 }
 
@@ -448,6 +594,69 @@ export async function setThesisSignInHandler(handler: ThesisSignInHandler | null
   if (!isBrowser()) return; // server rendering: nothing to register
   const csid = await loadCabalSpyIDWidget(scriptSrc);
   csid.thesis?.setSignInHandler?.(handler);
+}
+
+/**
+ * Mounts the "+ Trade Feed" button for one trader into `target` (an element or
+ * a CSS selector). `clientId` (your instance's public client_id) is required.
+ * `accessToken` (scope `trade_feed`) signs the person in right away; the Trade
+ * Feed and theses widgets share one sign-in.
+ */
+export function mountTradeFeedButton(
+  target: Element | string,
+  options: TradeFeedButtonOptions & { accessToken?: string | null; scriptSrc?: string },
+): MountedWidget<TradeFeedButtonOptions> {
+  return mountWith<TradeFeedButtonOptions>(
+    target,
+    options,
+    tradeFeedButtonAttributes,
+    (csid) => {
+      if (options.accessToken !== undefined) (csid.tradeFeed ?? csid.thesis)?.setAccessToken(options.accessToken);
+    },
+    options.scriptSrc,
+  );
+}
+
+/**
+ * Mounts the signed-in person's Trade Feed (live) into `target`. `clientId` is
+ * required; `accessToken` (scope `trade_feed`) signs the person in right away.
+ */
+export function mountTradeFeed(
+  target: Element | string,
+  options: TradeFeedWidgetOptions & { accessToken?: string | null; scriptSrc?: string },
+): MountedWidget<TradeFeedWidgetOptions> {
+  return mountWith<TradeFeedWidgetOptions>(
+    target,
+    options,
+    tradeFeedWidgetAttributes,
+    (csid) => {
+      if (options.accessToken !== undefined) (csid.tradeFeed ?? csid.thesis)?.setAccessToken(options.accessToken);
+    },
+    options.scriptSrc,
+  );
+}
+
+/**
+ * Signs the Trade Feed widgets on the page in as this user (a CabalSpy ID
+ * access token with the scope `trade_feed`), or out with `null`. Shared with
+ * the theses widgets (`setThesisAccessToken`).
+ */
+export async function setTradeFeedAccessToken(token: string | null, scriptSrc?: string): Promise<void> {
+  const csid = await loadCabalSpyIDWidget(scriptSrc);
+  (csid.tradeFeed ?? csid.thesis)?.setAccessToken(token);
+}
+
+/**
+ * Lets your page handle the Trade Feed widgets' sign-in (the same handler as
+ * {@link setThesisSignInHandler}: both widget kinds share it). Get an access
+ * token with the scope `trade_feed`, pass it to `setTradeFeedAccessToken` and
+ * resolve `true`; resolve `false` when the person is not signed in. `null`
+ * removes it; a no-op on the server.
+ */
+export async function setTradeFeedSignInHandler(handler: TradeFeedSignInHandler | null, scriptSrc?: string): Promise<void> {
+  if (!isBrowser()) return;
+  const csid = await loadCabalSpyIDWidget(scriptSrc);
+  (csid.tradeFeed ?? csid.thesis)?.setSignInHandler?.(handler);
 }
 
 /** Starts the browser (public client) login flow. */

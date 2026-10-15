@@ -22,6 +22,15 @@ createServer(async (req, res) => {
         case 'consent.revoked':
           console.log('user', event.data.sub, 'removed access: delete their data');
           break;
+        case 'trade_feed.trade': {
+          // a trader in your users' Trade Feeds traded: tell event.data.recipients
+          const { trader, trade, recipients } = event.data;
+          console.log(`notify ${recipients.length} users: @${trader.username} ${trade.side} ${trade.symbol ?? trade.mint} (${trade.label})`);
+          break;
+        }
+        case 'trade_feed.thesis':
+          console.log(`notify ${event.data.recipients.length} users: @${event.data.trader.username} posted a thesis`);
+          break;
         default:
           console.log('event', event.type);
       }

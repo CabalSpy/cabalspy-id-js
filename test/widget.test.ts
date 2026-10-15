@@ -9,11 +9,17 @@ import {
   loginButtonAttributes,
   mountLoginButton,
   mountTheses,
+  mountTradeFeed,
+  mountTradeFeedButton,
   onWidgetEvents,
   setThesisAccessToken,
   setThesisSignInHandler,
+  setTradeFeedAccessToken,
+  setTradeFeedSignInHandler,
   startLogin,
   thesisWidgetAttributes,
+  tradeFeedButtonAttributes,
+  tradeFeedWidgetAttributes,
 } from '../src/widget';
 
 const mount = vi.fn();
@@ -156,5 +162,59 @@ describe('subpath entry points', () => {
     expect('ThesisClient' in api).toBe(false);
     expect('CabalSpyIDAuth' in thesis).toBe(false);
     expect(thesis.THESIS_EMOJIS).toBe(root.THESIS_EMOJIS);
+  });
+});
+
+describe('Trade Feed widgets', () => {
+  it('mounts the "+ Trade Feed" button with data-* attributes and passes the access token', async () => {
+    const w = mountTradeFeedButton(host, { trader: '@alice', clientId: 'csid_a', size: 'lg', showCount: false, theme: 'light', accessToken: 'at-tf' });
+    expect({ ...w.element.dataset }).toEqual({
+      csidTradeFeedButton: '',
+      trader: '@alice',
+      clientId: 'csid_a',
+      theme: 'light',
+      size: 'lg',
+      showCount: 'false',
+    });
+    loadWidget();
+    await tick();
+    expect(mount).toHaveBeenCalled();
+    expect(setAccessToken).toHaveBeenCalledWith('at-tf');
+  });
+
+  it('mounts the feed with filter and design options; uses CSID.tradeFeed when present', async () => {
+    const w = mountTradeFeed('#host', { clientId: 'csid_a', filter: 'buys', showHeader: false, frameless: true, maxHeight: 640, accent: '#0f0' });
+    expect({ ...w.element.dataset }).toEqual({
+      csidTradeFeed: '',
+      clientId: 'csid_a',
+      accent: '#0f0',
+      frameless: 'true',
+      filter: 'buys',
+      showHeader: 'false',
+      maxHeight: '640',
+    });
+    loadWidget();
+    const tfSet = vi.fn();
+    const tfHandler = vi.fn();
+    window.CSID!.tradeFeed = { setAccessToken: tfSet, setSignInHandler: tfHandler, clear: vi.fn() };
+    await tick();
+    await setTradeFeedAccessToken('at-2');
+    expect(tfSet).toHaveBeenCalledWith('at-2');
+    const handler = async () => true;
+    await setTradeFeedSignInHandler(handler);
+    expect(tfHandler).toHaveBeenCalledWith(handler);
+  });
+
+  it('requires clientId and trader', () => {
+    // @ts-expect-error clientId is required
+    expect(() => tradeFeedWidgetAttributes({})).toThrow(expect.objectContaining({ code: 'client_id_required' }));
+    expect(() => tradeFeedButtonAttributes({ trader: 'a', clientId: '' })).toThrow(/Trade Feed button needs your instance's public client_id/);
+    expect(() => tradeFeedButtonAttributes({ trader: ' ', clientId: 'csid_a' })).toThrow(expect.objectContaining({ code: 'missing_parameter' }));
+    expect(tradeFeedButtonAttributes({ trader: 'a', clientId: 'csid_a', width: 200 })['data-width']).toBe('200');
+    expect(thesisWidgetAttributes({ chain: 'solana', mint: 'm', clientId: 'csid_a', frameless: true, maxHeight: 500 })).toMatchObject({
+      'data-frameless': 'true',
+      'data-max-height': '500',
+    });
+    expect(host.children).toHaveLength(0);
   });
 });
