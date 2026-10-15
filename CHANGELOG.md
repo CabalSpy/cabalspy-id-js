@@ -4,6 +4,19 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-10-15
+
+### Changed
+
+- People can sign in with X, Telegram or Google. Types match accounts without X: `x` is
+  `null` in userinfo claims and Data API profiles, `twitter` is `null` in profiles, trading
+  profile blocks and leaderboards, `telegram` is documented (`https://t.me/<name>` or `""`),
+  handles may be `tg.<name>` or `id.<hex>`.
+
+### Added
+
+- `hasX()` and `handleKind()` helpers and a README section "Users without X".
+
 ## [0.5.0] - 2026-10-14
 
 ### Added
@@ -90,6 +103,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.5.1]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.3.0...v0.4.0

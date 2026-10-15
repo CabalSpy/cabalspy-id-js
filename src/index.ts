@@ -121,6 +121,8 @@ export {
 
 export * from './types';
 
+export { hasX, handleKind, type UserLike, type HandleKind } from './users';
+
 export { SDK_VERSION } from './util';
 
 import { CabalSpyID } from './client';

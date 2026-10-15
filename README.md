@@ -164,6 +164,28 @@ Scopes: `openid` `profile` `wallets` `onchain` `thesis` `offline_access` (`thesi
 
 A runnable server is in [examples/login-server.mjs](examples/login-server.mjs).
 
+## Users without X
+
+People can sign in to CabalSpy ID with **X, Telegram or Google**. Accounts without X can do everything except earn the KOL badge, and connecting X later fills in their profile. For them:
+
+| Field | With X | Without X |
+|---|---|---|
+| `preferred_username` (claims) / `username` | X handle, e.g. `alice` | `tg.<telegram name>` (Telegram) or `id.<hex>` (Google) — always contains a dot |
+| `x` (userinfo, `/v1/profile`) | X profile / stats | `null` |
+| `twitter` (profiles, trading profile blocks, leaderboards) | `https://x.com/<handle>` | `null` |
+| `telegram` (profiles, trading profile blocks, leaderboards) | `https://t.me/<name>` or `""` | `https://t.me/<name>` or `""` |
+| `name`, `picture` / `image_url` | from X | from Telegram or Google |
+
+`profile_url` (`https://id.cabalspy.xyz/u/<handle>`) works for everyone. Thesis authors use the same handles.
+
+```ts
+import { hasX, handleKind } from 'cabalspy-id';
+
+hasX(claims);              // false for Telegram/Google sign-ins
+handleKind('tg.alice');    // 'telegram'
+const xLink = profile.twitter ?? null; // never build x.com links from tg./id. handles
+```
+
 ## Data API
 
 ```ts

@@ -92,18 +92,23 @@ export interface VerifiedWallet {
 export interface Profile {
   /** The user's id: the `sub` of their ID token. */
   csid_id: string;
+  /** X handle; for people without X `tg.<telegram name>` (signed in with Telegram) or `id.<hex>` (signed in with Google). X handles never contain a dot. */
   username: string;
   name: string | null;
   image_url: string | null;
   bio: string | null;
-  twitter: string;
+  /** https://x.com/<handle>; `null` for people without X. */
+  twitter: string | null;
+  /** https://t.me/<name> when Telegram is connected, else an empty string. */
+  telegram: string;
+  /** X stats; `null` for people who signed in with Telegram or Google and have not connected X. */
   x: {
     id: string;
     followers: number | null;
     following: number | null;
     verified: boolean | null;
     verified_type: string | null;
-  };
+  } | null;
   kol: { badge: boolean; since: string | null };
   profile_url: string;
   wallets: VerifiedWallet[];
@@ -122,10 +127,13 @@ export interface WalletLookupResponse {
 /** Trader block on trading responses. */
 export interface TraderProfile {
   csid_id: string;
+  /** X handle; for people without X `tg.<telegram name>` (signed in with Telegram) or `id.<hex>` (signed in with Google). X handles never contain a dot. */
   username: string;
   name: string | null;
   image_url: string | null;
-  twitter: string;
+  /** https://x.com/<handle>; `null` for people without X. */
+  twitter: string | null;
+  /** https://t.me/<name> when Telegram is connected, else an empty string. */
   telegram: string;
   blockchain: Chain;
   currency: Currency;
@@ -370,7 +378,9 @@ export interface LeaderboardEntry {
     username: string;
     name: string | null;
     image_url: string | null;
-    twitter: string;
+    /** https://x.com/<handle>; `null` for people without X. */
+    twitter: string | null;
+    /** https://t.me/<name> when Telegram is connected, else an empty string. */
     telegram: string;
     blockchain: Chain;
     currency: Currency;
@@ -482,13 +492,17 @@ export interface CabalSpyIDClaims {
   auth_time?: number;
   nonce?: string;
   name?: string | null;
+  /** X handle; for people without X `tg.<telegram name>` (signed in with Telegram) or `id.<hex>` (signed in with Google). X handles never contain a dot. */
   preferred_username?: string;
   picture?: string | null;
   /** https://id.cabalspy.xyz/u/<username> */
   profile?: string;
   kol_badge?: boolean;
-  /** Full X profile, userinfo only (scope `profile`). */
-  x?: XProfileClaim;
+  /**
+   * Full X profile, userinfo only (scope `profile`). `null` for people who signed
+   * in with Telegram or Google and have not connected X. See hasX().
+   */
+  x?: XProfileClaim | null;
   /** Verified wallets, userinfo only (scope `wallets`). */
   wallets?: WalletClaim[];
   /** Latest 7-day on-chain volume, userinfo only (scope `onchain`). */
@@ -595,6 +609,7 @@ export const THESIS_MAX_BODY = 1000;
 
 export interface ThesisAuthor {
   csid_id: string;
+  /** X handle; for people without X `tg.<telegram name>` (signed in with Telegram) or `id.<hex>` (signed in with Google). X handles never contain a dot. */
   username: string | null;
   name: string | null;
   image_url: string | null;

@@ -62,6 +62,8 @@ export { verifyWebhook, signWebhook, type VerifyWebhookOptions, type HeaderSourc
 
 export * from './errors';
 
+export { hasX, handleKind, type UserLike, type HandleKind } from '../users';
+
 export {
   CHAINS,
   THESIS_EMOJIS,
