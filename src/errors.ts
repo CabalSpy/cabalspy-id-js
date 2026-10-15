@@ -66,9 +66,9 @@ export class CabalSpyIDError extends Error {
 
 /** 400 — missing_parameter, invalid_parameter, instance_required */
 export class BadRequestError extends CabalSpyIDError {}
-/** 401 — missing_api_key */
+/** 401 — missing_api_key; thesis API: client_id_required, invalid_client */
 export class AuthenticationError extends CabalSpyIDError {}
-/** 403 — invalid_api_key, product_not_enabled, no_instance, scope_not_allowed */
+/** 403 — invalid_api_key, product_not_enabled, no_instance, scope_not_allowed; thesis API: origin_not_allowed */
 export class PermissionError extends CabalSpyIDError {}
 /**
  * 403 — plan_user_limit. The person signed in beyond the plan's user limit:
@@ -79,7 +79,7 @@ export class PlanUserLimitError extends PermissionError {
 }
 /** 404 — profile_not_found, wallet_not_found, instance_not_found */
 export class NotFoundError extends CabalSpyIDError {}
-/** 429 — rate_limit_exceeded */
+/** 429 — rate_limit_exceeded; thesis API: rate_limited (Retry-After 60) */
 export class RateLimitError extends CabalSpyIDError {
   /** Seconds until the next request is allowed, taken from Retry-After. */
   readonly retryAfter: number | null;

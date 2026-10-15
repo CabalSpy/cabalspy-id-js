@@ -15,6 +15,8 @@ import {
 } from '../../src/index';
 
 const WSOL = 'So11111111111111111111111111111111111111112';
+/** Public client_id of the CabalSpy ID playground instance (not a secret). */
+const PLAYGROUND_CLIENT_ID = 'csid_a97b0c26eccf6f41d5e3a99b';
 
 describe('live: Data API', () => {
   it('GET /v1/health', async () => {
@@ -78,7 +80,7 @@ describe('live: OpenID Connect', () => {
 });
 
 describe('live: theses', () => {
-  const tc = new ThesisClient();
+  const tc = new ThesisClient({ clientId: PLAYGROUND_CLIENT_ID });
 
   it('lists theses of a token with token info and counts', async () => {
     const page = await tc.list('solana', WSOL, { limit: 2 });
@@ -96,7 +98,7 @@ describe('live: theses', () => {
 
   it('maps errors: bad mint, missing / invalid token', async () => {
     await expect(tc.summary('solana', 'not-a-mint')).rejects.toBeInstanceOf(BadRequestError);
-    const signedOut = new ThesisClient({ accessToken: 'not-a-token' });
+    const signedOut = new ThesisClient({ clientId: PLAYGROUND_CLIENT_ID, accessToken: 'not-a-token' });
     await expect(signedOut.me('solana', WSOL)).rejects.toBeInstanceOf(AuthenticationError);
   });
 
@@ -129,13 +131,13 @@ describe('live: theses stream and scope', () => {
   });
 
   it('public reads accept scope=global', async () => {
-    const s = await new ThesisClient({ scope: 'global' }).summary('solana', WSOL);
+    const s = await new ThesisClient({ clientId: PLAYGROUND_CLIENT_ID, scope: 'global' }).summary('solana', WSOL);
     expect(typeof s.theses).toBe('number');
   });
 });
 
 describe('live: notifications', () => {
   it('needs a valid user token', async () => {
-    await expect(new ThesisClient({ accessToken: 'not-a-token' }).notifications()).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(new ThesisClient({ clientId: PLAYGROUND_CLIENT_ID, accessToken: 'not-a-token' }).notifications()).rejects.toBeInstanceOf(AuthenticationError);
   });
 });

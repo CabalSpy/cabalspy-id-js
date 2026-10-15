@@ -1,4 +1,4 @@
-// Token theses through the Data API.  CABALSPY_API_KEY=... CSID_USER=<sub> node examples/theses.mjs <mint>
+// Token theses through the Data API.  CABALSPY_API_KEY=... CSID_CLIENT_ID=csid_... CSID_USER=<sub> node examples/theses.mjs <mint>
 // Writing needs a user who signed in to your app with the scope "thesis".
 import { CabalSpyID, PermissionError, ThesisClient } from 'cabalspy-id';
 
@@ -41,8 +41,8 @@ ts.on('thesis', (t) => console.log('[theses stream]', t.blockchain, t.mint, t.bo
 await ts.connect().catch((e) => console.log('theses stream:', e.code));
 ts.subscribe([{ blockchain: 'solana', mint }]);
 
-// ... or the public per-token socket (no key, also in browsers)
-const live = new ThesisClient().live('solana', mint);
+// ... or the public per-token socket (no API key, also in browsers; needs your public client_id)
+const live = new ThesisClient({ clientId: process.env.CSID_CLIENT_ID ?? 'csid_...' }).live('solana', mint);
 live.on('thesis', (t) => console.log('[public] new thesis', t.body));
 await live.connect();
 process.on('SIGINT', () => {

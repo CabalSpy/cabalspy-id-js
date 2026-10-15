@@ -2,10 +2,12 @@
 //  PUBLIC THESIS API — https://id.cabalspy.xyz/thesis/v1 (browser friendly)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Reading needs nothing. Writing needs the signed-in user's CabalSpy ID access
-// token with the scope "thesis" (e.g. from the login widget's csid:login event).
-// CORS is open and no cookies are used, so this runs in the browser as is.
-// Your API key is never needed here (and must never reach a browser).
+// Every call carries your instance's PUBLIC client_id (header X-CSID-Client-Id,
+// and client_id on the websocket URL). Reading needs nothing else. Writing needs
+// the signed-in user's CabalSpy ID access token with the scope "thesis" (e.g.
+// from the login widget's csid:login event). No cookies are used, so this runs in
+// the browser as is (from one of the instance's allowed origins). Your API key is
+// never needed here (and must never reach a browser).
 
 import {
   type ApiErrorBody,
@@ -16,6 +18,7 @@ import {
   EMPTY_RATE_LIMIT,
   InvalidResponseError,
   PermissionError,
+  RateLimitError,
   errorFromStatus,
 } from './errors';
 import {
@@ -41,6 +44,23 @@ import { USER_AGENT } from './util';
 
 export const DEFAULT_THESIS_URL = 'https://id.cabalspy.xyz/thesis/v1';
 export const DEFAULT_THESIS_WS_URL = 'wss://id.cabalspy.xyz/thesis/v1/ws';
+/** Header that carries the instance's public client_id on every thesis API call. */
+export const CLIENT_ID_HEADER = 'X-CSID-Client-Id';
+
+const CLIENT_ID_REQUIRED_MESSAGE =
+  "ThesisClient needs your instance's public client_id (csid_..., shown in the dashboard next to the API key): " +
+  "new ThesisClient({ clientId: 'csid_...' }). It is not the API key; never put the API key in a browser.";
+
+/** Throws an AuthenticationError with code `client_id_required` when the client_id is missing or empty. */
+export function assertClientId(clientId: unknown): asserts clientId is string {
+  if (typeof clientId !== 'string' || !clientId.trim()) {
+    throw new AuthenticationError(CLIENT_ID_REQUIRED_MESSAGE, {
+      code: 'client_id_required',
+      parameter: 'clientId',
+      docs: 'https://docs.cabalspy.xyz/cabalspy-id/errors#client_id_required',
+    });
+  }
+}
 
 export interface ThesisScopeOptions {
   /**
@@ -48,11 +68,26 @@ export interface ThesisScopeOptions {
    * ones written on the instance named by `clientId`.
    */
   scope?: 'global' | 'instance';
-  /** Your instance's client_id. Needed for `scope: 'instance'`; also credits posts to your app. */
+  /**
+   * Instance whose theses `scope: 'instance'` reads. Defaults to the client's
+   * own `clientId`; you rarely need to set it per call.
+   */
   clientId?: string;
 }
 
-export interface ThesisClientOptions extends ThesisScopeOptions {
+export interface ThesisClientOptions {
+  /**
+   * Required. Your instance's PUBLIC client_id (`csid_...`), shown in the
+   * dashboard next to the API key. It is not a secret and not the API key. Sent
+   * as `X-CSID-Client-Id` on every call and as `client_id` on the live socket;
+   * also used for `scope: 'instance'` and credits posts to your app.
+   */
+  clientId: string;
+  /**
+   * `global` (default): theses written on every platform. `instance`: only the
+   * ones written on your instance.
+   */
+  scope?: 'global' | 'instance';
   /** The signed-in user's access token (scope `thesis`). Needed only for writing. */
   accessToken?: string | null;
   /** Default: https://id.cabalspy.xyz/thesis/v1 */
@@ -122,7 +157,7 @@ function scopeQuery(scope: string | undefined, clientId: string | undefined): Re
  * Client for the public thesis API, e.g. in a browser app that builds its own
  * thesis UI.
  *
- *   const theses = new ThesisClient({ accessToken });     // from csid:login
+ *   const theses = new ThesisClient({ clientId: 'csid_...', accessToken }); // token from csid:login
  *   const page = await theses.list('solana', mint, { sort: 'top' });
  *   await theses.post('solana', mint, { body: 'Strong community, early.', stance: 'bull' });
  *   const live = theses.live('solana', mint);
@@ -134,17 +169,19 @@ export class ThesisClient {
   readonly wsUrl: string;
   readonly timeout: number;
   readonly scope?: 'global' | 'instance';
-  readonly clientId?: string;
+  /** Your instance's public client_id, sent on every call. */
+  readonly clientId: string;
   private accessToken: string | null;
   private readonly fetchImpl: typeof globalThis.fetch;
 
-  constructor(options: ThesisClientOptions = {}) {
+  constructor(options: ThesisClientOptions) {
+    assertClientId(options?.clientId);
     this.accessToken = options.accessToken ?? null;
     this.baseUrl = (options.baseUrl ?? DEFAULT_THESIS_URL).replace(/\/+$/, '');
     this.wsUrl = (options.wsUrl ?? DEFAULT_THESIS_WS_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 15_000;
     this.scope = options.scope;
-    this.clientId = options.clientId;
+    this.clientId = options.clientId.trim();
     scopeQuery(this.scope, this.clientId);
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
@@ -180,6 +217,7 @@ export class ThesisClient {
         credentials: 'omit',
         headers: {
           Accept: 'application/json',
+          [CLIENT_ID_HEADER]: this.clientId,
           ...(typeof window === 'undefined' ? { 'User-Agent': USER_AGENT } : {}),
           ...(this.accessToken && opts.auth ? { Authorization: `Bearer ${this.accessToken}` } : {}),
           ...(opts.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
@@ -203,7 +241,9 @@ export class ThesisClient {
     }
     if (!res.ok || parsed?.success === false) {
       const err = (parsed?.error ?? null) as ApiErrorBody | null;
-      throw errorFromStatus(res.status, err, { ...EMPTY_RATE_LIMIT }, null, `HTTP ${res.status} on ${method} ${path}`);
+      const ra = res.headers.get('Retry-After');
+      const retryAfter = ra !== null && ra.trim() !== '' && Number.isFinite(Number(ra)) ? Number(ra) : null;
+      throw errorFromStatus(res.status, err, { ...EMPTY_RATE_LIMIT }, retryAfter, `HTTP ${res.status} on ${method} ${path}`);
     }
     if (!parsed || !('data' in parsed)) {
       throw new InvalidResponseError(`Unexpected response shape on ${method} ${path}`, { status: res.status, code: 'invalid_response' });
@@ -286,13 +326,13 @@ export class ThesisClient {
     if (params.stance && params.stance !== 'bull' && params.stance !== 'bear') {
       throw new BadRequestError('stance must be bull or bear', { code: 'invalid_parameter', parameter: 'stance', allowed: ['bull', 'bear'] });
     }
-    const body = { ...params, ...(this.clientId ? { client_id: this.clientId } : {}) };
+    const body = { ...params, client_id: this.clientId };
     return (await this.call<Thesis>('POST', this.tokenPath(chain, mint), { auth: 'required', body })).data;
   }
 
   /** Replies to a thesis. Any signed-in user may reply. */
   async reply(id: string, body: string): Promise<Thesis> {
-    const payload = { body, ...(this.clientId ? { client_id: this.clientId } : {}) };
+    const payload = { body, client_id: this.clientId };
     return (await this.call<Thesis>('POST', `/items/${enc(id)}/replies`, { auth: 'required', body: payload })).data;
   }
 
@@ -341,14 +381,16 @@ export class ThesisClient {
   // ── live ──────────────────────────────────────────────────────────────────
 
   /**
-   * Live updates for one token: thesis, reply, reaction, removed. With
-   * `scope: 'instance'` (and `clientId`) only theses written on that instance.
+   * Live updates for one token: thesis, reply, reaction, removed. The socket URL
+   * carries `client_id`. With `scope: 'instance'` only theses written on your instance.
    */
   live(chain: Chain, mint: string, options: ThesisLiveOptions & ThesisScopeOptions = {}): ThesisLive {
     this.tokenPath(chain, mint);
-    const sp = new URLSearchParams(scopeQuery(options.scope ?? this.scope, options.clientId ?? this.clientId) as Record<string, string>);
-    const qs = sp.toString();
-    return new ThesisLive(`${this.wsUrl}/${enc(chain)}/${enc(mint)}${qs ? `?${qs}` : ''}`, options);
+    const sp = new URLSearchParams({
+      client_id: this.clientId,
+      ...(scopeQuery(options.scope ?? this.scope, options.clientId ?? this.clientId) as Record<string, string>),
+    });
+    return new ThesisLive(`${this.wsUrl}/${enc(chain)}/${enc(mint)}?${sp.toString()}`, options);
   }
 }
 
@@ -389,10 +431,61 @@ interface MinimalWebSocket {
   onmessage: ((ev: { data: unknown }) => void) | null;
 }
 
+/** Close codes of the live socket for client_id checks (the close reason is the error code). */
+export const THESIS_WS_CLOSE_CODES = {
+  /** client_id_required or invalid_client: final. */
+  CLIENT: 4401,
+  /** origin_not_allowed: final. */
+  ORIGIN: 4403,
+  /** rate_limited: reconnects after 60 s. */
+  RATE_LIMITED: 4429,
+} as const;
+
+/** Wait after a 4429 close before reconnecting (the server's Retry-After). */
+const RATE_LIMIT_BACKOFF_MS = 60_000;
+
+const docsFor = (code: string) => `https://docs.cabalspy.xyz/cabalspy-id/errors#${code}`;
+
+/** The error for a refusing close code of the live socket, or null for an ordinary close. */
+export function thesisCloseError(code: number | undefined, reason?: string): CabalSpyIDError | null {
+  if (code === 4401) {
+    const c = reason === 'invalid_client' ? 'invalid_client' : 'client_id_required';
+    const msg =
+      c === 'invalid_client'
+        ? 'The live socket was refused (4401): unknown or inactive client_id'
+        : "The live socket was refused (4401): your instance's public client_id is required";
+    return new AuthenticationError(msg, { code: c, status: 401, docs: docsFor(c) });
+  }
+  if (code === 4403) {
+    return new PermissionError("The live socket was refused (4403): this page's origin is not one of the instance's allowed origins", {
+      code: 'origin_not_allowed',
+      status: 403,
+      docs: docsFor('origin_not_allowed'),
+    });
+  }
+  if (code === 4429) {
+    return new RateLimitError('The live socket was refused (4429): rate limited; reconnecting in 60 s', {
+      code: 'rate_limited',
+      status: 429,
+      docs: docsFor('rate_limited'),
+      retryAfter: RATE_LIMIT_BACKOFF_MS / 1000,
+    });
+  }
+  if (code === 1008) {
+    return new PermissionError('The live socket was refused (1008): invalid token address or too many sockets from this IP', {
+      code: 'ws_refused',
+      status: 403,
+    });
+  }
+  return null;
+}
+
 /**
  * Public live socket for one token. Messages arrive as `thesis`, `reply`,
  * `reaction` and `removed`; it reconnects after drops or missed heartbeats.
- * Code 1008 (invalid token address, too many sockets) is final.
+ * Codes 1008 (invalid token address, too many sockets), 4401 (client_id
+ * missing or invalid) and 4403 (origin not allowed) are final; after 4429
+ * (rate limited) it waits 60 s before reconnecting.
  */
 export class ThesisLive {
   private ws: MinimalWebSocket | null = null;
@@ -497,27 +590,24 @@ export class ThesisLive {
         this.disarm();
         const e = (ev ?? {}) as { code?: number; reason?: string };
         this.emit('close', { code: e.code, reason: e.reason });
-        const final = e.code === 1008;
-        if (final) {
-          this.emit(
-            'error',
-            new PermissionError('The live socket was refused (1008): invalid token address or too many sockets from this IP', {
-              code: 'ws_refused',
-              status: 403,
-            }),
-          );
-        }
+        const refusal = thesisCloseError(e.code, e.reason);
+        const rateLimited = e.code === 4429;
+        const final = refusal !== null && !rateLimited;
+        if (refusal) this.emit('error', refusal);
         if (!settled) {
           settled = true;
-          reject(new ConnectionError(`Live socket closed before it opened (code ${e.code ?? 'unknown'})`, { code: 'ws_closed_early' }));
+          reject(
+            refusal ?? new ConnectionError(`Live socket closed before it opened (code ${e.code ?? 'unknown'})`, { code: 'ws_closed_early' }),
+          );
         }
-        if (!this.closedByUser && !final && this.opts.reconnect) this.scheduleReconnect();
+        if (!this.closedByUser && !final && this.opts.reconnect) this.scheduleReconnect(rateLimited ? RATE_LIMIT_BACKOFF_MS : 0);
       };
     });
   }
 
-  private scheduleReconnect(): void {
-    const delay = Math.min(this.opts.reconnectDelay * 2 ** this.attempt, this.opts.maxReconnectDelay) + Math.random() * 250;
+  private scheduleReconnect(minDelay = 0): void {
+    const delay =
+      Math.max(minDelay, Math.min(this.opts.reconnectDelay * 2 ** this.attempt, this.opts.maxReconnectDelay)) + Math.random() * 250;
     this.attempt++;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

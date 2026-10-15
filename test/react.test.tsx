@@ -146,17 +146,17 @@ describe('useCabalSpyID()', () => {
 describe('<CabalSpyTheses />', () => {
   it('renders the thesis element, mounts it and passes the access token', async () => {
     await act(async () => {
-      root.render(<CabalSpyTheses chain="solana" mint="MintA" theme="light" height={600} accessToken="at-1" />);
+      root.render(<CabalSpyTheses chain="solana" mint="MintA" clientId="csid_a" theme="light" height={600} accessToken="at-1" />);
     });
     const el = container.querySelector('[data-csid-thesis]') as HTMLElement;
-    expect(el.dataset).toMatchObject({ chain: 'solana', mint: 'MintA', theme: 'light', height: '600' });
+    expect(el.dataset).toMatchObject({ chain: 'solana', mint: 'MintA', clientId: 'csid_a', theme: 'light', height: '600' });
     expect(el.hasAttribute('data-radius')).toBe(false);
     await act(async () => fakeWidgetLoad());
     expect(mount).toHaveBeenCalled();
     expect(setAccessToken).toHaveBeenCalledWith('at-1');
 
     await act(async () => {
-      root.render(<CabalSpyTheses chain="solana" mint="MintB" theme="light" height={600} accessToken={null} />);
+      root.render(<CabalSpyTheses chain="solana" mint="MintB" clientId="csid_a" theme="light" height={600} accessToken={null} />);
     });
     const next = container.querySelector('[data-csid-thesis]') as HTMLElement;
     expect(next).not.toBe(el); // a new element for the widget to mount

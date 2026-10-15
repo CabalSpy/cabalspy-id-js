@@ -12,6 +12,7 @@ import {
   onWidgetEvents,
   setThesisAccessToken,
   startLogin,
+  thesisWidgetAttributes,
 } from '../src/widget';
 
 const mount = vi.fn();
@@ -109,7 +110,14 @@ describe('cabalspy-id/widget', () => {
 
   it('helpers', () => {
     expect(loginButtonAttributes({ clientId: 'c', showLogo: false })['data-show-logo']).toBe('false');
-    expect(() => mountTheses('#missing', { chain: 'solana', mint: 'm' })).toThrow(/no element/);
+    expect(() => mountTheses('#missing', { chain: 'solana', mint: 'm', clientId: 'csid_a' })).toThrow(/no element/);
+    // @ts-expect-error clientId is required
+    expect(() => mountTheses(host, { chain: 'solana', mint: 'm' })).toThrow(/public client_id/);
+    expect(() => thesisWidgetAttributes({ chain: 'solana', mint: 'm', clientId: ' ' })).toThrow(
+      expect.objectContaining({ code: 'client_id_required' }),
+    );
+    expect(host.children).toHaveLength(0);
+    expect(thesisWidgetAttributes({ chain: 'solana', mint: 'm', clientId: 'csid_a' })['data-client-id']).toBe('csid_a');
     const stop = onWidgetEvents({});
     stop();
   });

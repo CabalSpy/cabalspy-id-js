@@ -114,7 +114,7 @@ export interface CabalSpyThesesProps extends ThesisWidgetOptions {
  * Token theses widget: holders' theses on a token with their real position,
  * replies, reactions, live updates.
  *
- *   <CabalSpyTheses chain="solana" mint={mint} theme="dark" accessToken={accessToken} />
+ *   <CabalSpyTheses chain="solana" mint={mint} clientId="csid_..." theme="dark" accessToken={accessToken} />
  */
 export function CabalSpyTheses(props: CabalSpyThesesProps) {
   const { accessToken, scriptSrc } = props;
