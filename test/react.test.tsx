@@ -12,6 +12,7 @@ let root: Root;
 const mount = vi.fn();
 const signOut = vi.fn();
 const setAccessToken = vi.fn();
+const setSignInHandler = vi.fn();
 
 function fakeWidgetLoad() {
   const script = document.querySelector<HTMLScriptElement>(`script[src="${WIDGET_SRC}"]`);
@@ -27,7 +28,7 @@ function fakeWidgetLoad() {
       window.dispatchEvent(new CustomEvent('csid:logout', { detail: { clientId } }));
     },
     onLogin: vi.fn(),
-    thesis: { setAccessToken, clear: vi.fn() },
+    thesis: { setAccessToken, setSignInHandler, clear: vi.fn() },
   };
   script!.dispatchEvent(new Event('load'));
 }
@@ -51,6 +52,7 @@ afterEach(() => {
   mount.mockReset();
   signOut.mockReset();
   setAccessToken.mockReset();
+  setSignInHandler.mockReset();
 });
 
 describe('<CabalSpyLogin />', () => {
@@ -146,22 +148,57 @@ describe('useCabalSpyID()', () => {
 describe('<CabalSpyTheses />', () => {
   it('renders the thesis element, mounts it and passes the access token', async () => {
     await act(async () => {
-      root.render(<CabalSpyTheses chain="solana" mint="MintA" theme="light" height={600} accessToken="at-1" />);
+      root.render(<CabalSpyTheses chain="solana" mint="MintA" clientId="csid_a" theme="light" height={600} accessToken="at-1" />);
     });
     const el = container.querySelector('[data-csid-thesis]') as HTMLElement;
-    expect(el.dataset).toMatchObject({ chain: 'solana', mint: 'MintA', theme: 'light', height: '600' });
+    expect(el.dataset).toMatchObject({ chain: 'solana', mint: 'MintA', clientId: 'csid_a', theme: 'light', height: '600' });
     expect(el.hasAttribute('data-radius')).toBe(false);
     await act(async () => fakeWidgetLoad());
     expect(mount).toHaveBeenCalled();
     expect(setAccessToken).toHaveBeenCalledWith('at-1');
 
     await act(async () => {
-      root.render(<CabalSpyTheses chain="solana" mint="MintB" theme="light" height={600} accessToken={null} />);
+      root.render(<CabalSpyTheses chain="solana" mint="MintB" clientId="csid_a" theme="light" height={600} accessToken={null} />);
     });
     const next = container.querySelector('[data-csid-thesis]') as HTMLElement;
     expect(next).not.toBe(el); // a new element for the widget to mount
     expect(next.dataset.mint).toBe('MintB');
     expect(setAccessToken).toHaveBeenLastCalledWith(null);
+  });
+});
+
+describe('<CabalSpyTheses onSignIn>', () => {
+  it('registers a sign-in handler that calls the latest onSignIn, and removes it on unmount', async () => {
+    const first = vi.fn(async () => false);
+    const second = vi.fn(async () => true);
+    await act(async () => {
+      root.render(<CabalSpyTheses chain="solana" mint="MintA" clientId="csid_a" onSignIn={first} />);
+    });
+    await act(async () => fakeWidgetLoad());
+    expect(setSignInHandler).toHaveBeenCalledTimes(1);
+    const registered = setSignInHandler.mock.calls[0]![0] as () => Promise<boolean>;
+    expect(await registered()).toBe(false);
+    expect(first).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(<CabalSpyTheses chain="solana" mint="MintA" clientId="csid_a" onSignIn={second} />);
+    });
+    expect(setSignInHandler).toHaveBeenCalledTimes(1); // same wrapper, not registered again
+    expect(await registered()).toBe(true);
+    expect(second).toHaveBeenCalledTimes(1);
+
+    await act(async () => root.render(<div />));
+    await act(async () => undefined);
+    expect(setSignInHandler).toHaveBeenLastCalledWith(null);
+    expect(await registered()).toBe(false); // stale wrapper is inert
+  });
+
+  it('does not touch the sign-in handler without onSignIn', async () => {
+    await act(async () => {
+      root.render(<CabalSpyTheses chain="solana" mint="MintA" clientId="csid_a" />);
+    });
+    await act(async () => fakeWidgetLoad());
+    expect(setSignInHandler).not.toHaveBeenCalled();
   });
 });
 

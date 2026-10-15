@@ -18,7 +18,7 @@ One package, everything you need:
 |---|---|
 | `CabalSpyIDAuth` | OpenID Connect for your server: PKCE, code exchange, refresh, revoke, userinfo, ID token verification (ES256 / JWKS) |
 | `cabalspy-id/react` | `<CabalSpyLogin />` button, `<CabalSpyTheses />` widget and `useCabalSpyID()` hook |
-| `ThesisClient` | public token thesis API for your own UI in the browser (user access token) with `live()` updates |
+| `ThesisClient` | public token thesis API for your own UI in the browser (your public `clientId` + user access token) with `live()` updates |
 | `CabalSpyID` | Data API client for `https://api-id.cabalspy.xyz/v1`, typed responses, pagination, live trade stream |
 | `verifyWebhook` | Standard Webhooks signature verification |
 
@@ -53,7 +53,7 @@ One codebase, one version line. The focused packages re-export parts of `cabalsp
 | `cabalspy-id` | everything |
 | `cabalspy-id/api` | `CabalSpyID`, `CabalSpyIDStream`, `CabalSpyIDAuth`, `verifyWebhook`, errors and Data API types |
 | `cabalspy-id/thesis` | `CabalSpyID` (thesis methods), `ThesisClient`, `ThesisLive`, `ThesesStream`, thesis types |
-| `cabalspy-id/widget` | browser only: `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `startLogin`, `onWidgetEvents`, `loadCabalSpyIDWidget` |
+| `cabalspy-id/widget` | browser only: `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `setThesisSignInHandler`, `startLogin`, `onWidgetEvents`, `loadCabalSpyIDWidget` |
 | `cabalspy-id/react` (= `cabalspy-id/widget/react`) | `<CabalSpyLogin />`, `<CabalSpyTheses />`, `useCabalSpyID()` |
 
 Classes are shared between entry points (`instanceof` works across them, ESM and CommonJS).
@@ -278,7 +278,9 @@ A thesis is a short opinion on a token (up to 1000 characters), optionally tagge
 
 Writing needs the scope **`thesis`** in your login (`scope: ['openid', 'profile', 'thesis']`).
 
-**Scope of reads.** Theses are shared across platforms. Every read (Data API `listTheses`, `thesisSummary`, `latestTheses`; `ThesisClient`; the widget; the live sockets) takes `scope`: `global` (default, every platform) or `instance` (only theses written on your instance). In the Data API your key decides the instance; the public API and widget need your `clientId`.
+**Scope of reads.** Theses are shared across platforms. Every read (Data API `listTheses`, `thesisSummary`, `latestTheses`; `ThesisClient`; the widget; the live sockets) takes `scope`: `global` (default, every platform) or `instance` (only theses written on your instance). In the Data API your key decides the instance; the public API and widget use your `clientId`.
+
+**Your public `clientId` is required** for everything that talks to the public thesis API (`ThesisClient`, `ThesisLive`, the theses widget). It is your instance's client_id (`csid_...`), shown in the dashboard next to the API key. It is public, not a secret and **not the API key** (the API key must never reach a browser). The SDK sends it as the `X-CSID-Client-Id` header on every call to `https://id.cabalspy.xyz/thesis/v1/...` and as `client_id` on the live socket URL (`wss://id.cabalspy.xyz/thesis/v1/ws/{chain}/{mint}?client_id=...`). Without it `new ThesisClient()` and `mountTheses()` / `<CabalSpyTheses>` throw an `AuthenticationError` with `code: 'client_id_required'`. Browser calls must come from one of the instance's allowed origins or verified domains (instances in dev mode also allow `http://localhost:*`). The Data API (`CabalSpyID`, API key) is unchanged.
 
 ### Widget
 
@@ -289,18 +291,35 @@ const { accessToken } = useCabalSpyID({ clientId: 'csid_...' });
 <CabalSpyTheses chain="solana" mint={mint} clientId="csid_..." theme="dark" accessToken={accessToken} />
 ```
 
-With `clientId` the widget loads the design saved in the dashboard and credits posts to your app. Every design setting can be overridden by a prop (mapped to the widget's `data-*` attribute): `theme`, `scope`, `sort`, `font`, `radius`, `bg`, `card`, `text`, `muted`, `border`, `accent`, `accentText`, `bull`, `bear`, `showHeader`, `showSentiment`, `compact`, `height`.
+`clientId` (required) identifies your instance: the widget loads the design saved in the dashboard and credits posts to your app. Every design setting can be overridden by a prop (mapped to the widget's `data-*` attribute): `theme`, `scope`, `sort`, `font`, `radius`, `bg`, `card`, `text`, `muted`, `border`, `accent`, `accentText`, `bull`, `bear`, `showHeader`, `showSentiment`, `compact`, `height`.
 
 Plain HTML: `<div data-csid-thesis data-chain="solana" data-mint="..." data-client-id="csid_..." data-theme="dark"></div>` with `widget.js`; `CSID.thesis.setAccessToken(token)` lets the signed-in person write without signing in again inside the widget (after a browser login through the widget this happens automatically).
 
+**Your own sign-in.** If people sign in to your platform with CabalSpy ID already, let the widget's "Sign in to write" use it instead of the page's login button / popup: `setThesisSignInHandler(fn)` (from `cabalspy-id/widget`, or `CSID.thesis.setSignInHandler(fn)` in plain HTML) or the `onSignIn` prop of `<CabalSpyTheses>`. `fn` gets a thesis-capable access token for the person (for example your platform's CabalSpy ID access token with the scope `thesis`, from your backend), passes it on with `setThesisAccessToken(token)` and resolves `true`; it resolves `false` when the person is not signed in. While a handler is set, the widget treats your page as the source of truth for sign-in (signed out on the page = signed out in the widget). `setThesisSignInHandler(null)` removes it; `<CabalSpyTheses>` removes it on unmount.
+
+```tsx
+<CabalSpyTheses
+  chain="solana"
+  mint={mint}
+  clientId="csid_..."
+  onSignIn={async () => {
+    const token = await fetch('/api/csid-thesis-token').then((r) => (r.ok ? r.text() : null));
+    if (!token) return false;
+    await setThesisAccessToken(token);
+    return true;
+  }}
+/>
+```
+
 ### Your own UI in the browser: `ThesisClient`
 
-The public thesis API (`https://id.cabalspy.xyz/thesis/v1`) needs no API key. Reading is open; writing uses the signed-in user's access token (scope `thesis`).
+The public thesis API (`https://id.cabalspy.xyz/thesis/v1`) needs no API key, only your public `clientId` (required). Reading needs nothing else; writing uses the signed-in user's access token (scope `thesis`).
 
 ```ts
 import { ThesisClient } from 'cabalspy-id';
 
-const theses = new ThesisClient({ accessToken, clientId: 'csid_...' }); // token from csid:login / useCabalSpyID()
+// clientId: your instance's PUBLIC client_id from the dashboard (not the API key)
+const theses = new ThesisClient({ clientId: 'csid_...', accessToken }); // token from csid:login / useCabalSpyID()
 // add scope: 'instance' to show only theses written on your platform
 
 const { items, token, summary } = await theses.list('solana', mint, { sort: 'top' });
@@ -309,12 +328,23 @@ if (me.can_post) await theses.post('solana', mint, { body: 'Strong community, st
 await theses.reply(items[0].id, 'Agree, chart looks good');
 await theses.react(items[0].id, '🚀');
 
-const live = theses.live('solana', mint);         // public websocket for one token (also takes { scope, clientId })
+const live = theses.live('solana', mint);         // public websocket for one token, ?client_id=... (also takes { scope })
 live.on('thesis', (t) => prepend(t)).on('reply', addReply).on('reaction', updateCounts).on('removed', ({ id }) => drop(id));
 await live.connect();
 ```
 
 Methods: `list`, `iterate`, `summary`, `get`, `replies`, `byUser`, `me`, `post`, `reply`, `react`, `report`, `delete`, `notifications`, `markNotificationsRead`, `appeal`, `live`, `setAccessToken`.
+
+client_id errors use the SDK's error classes, so check `err.code` (docs: `https://docs.cabalspy.xyz/cabalspy-id/errors#<code>`):
+
+| Code | HTTP | Live socket close | Error class | Meaning |
+|---|---|---|---|---|
+| `client_id_required` | 401 | 4401 | `AuthenticationError` | no client_id sent |
+| `invalid_client` | 401 | 4401 | `AuthenticationError` | unknown or inactive client_id |
+| `origin_not_allowed` | 403 | 4403 | `PermissionError` | the browser's Origin is not one of the instance's allowed origins / verified domains |
+| `rate_limited` | 429 | 4429 | `RateLimitError` (`retryAfter: 60`) | too many requests per client or per IP |
+
+`ThesisLive` does not reconnect after 4401 or 4403 (it emits `error` and stays closed); after 4429 it waits 60 s before reconnecting.
 
 ### Data API (server to server)
 

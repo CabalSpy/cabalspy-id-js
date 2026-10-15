@@ -11,12 +11,15 @@ import {
   mountTheses,
   onWidgetEvents,
   setThesisAccessToken,
+  setThesisSignInHandler,
   startLogin,
+  thesisWidgetAttributes,
 } from '../src/widget';
 
 const mount = vi.fn();
 const setAccessToken = vi.fn();
 const login = vi.fn(async () => undefined);
+const setSignInHandler = vi.fn();
 
 function loadWidget() {
   const script = document.querySelector<HTMLScriptElement>(`script[src="${WIDGET_SRC}"]`);
@@ -28,7 +31,7 @@ function loadWidget() {
     setUser: vi.fn(),
     signOut: vi.fn(),
     onLogin: vi.fn(),
-    thesis: { setAccessToken, clear: vi.fn() },
+    thesis: { setAccessToken, setSignInHandler, clear: vi.fn() },
   };
   script?.dispatchEvent(new Event('load'));
 }
@@ -107,9 +110,37 @@ describe('cabalspy-id/widget', () => {
     expect(login).toHaveBeenCalledWith({ clientId: 'csid_a', redirectUri: undefined, scope: 'openid thesis' });
   });
 
+  it('setThesisSignInHandler waits for widget.js and forwards the handler', async () => {
+    const handler = vi.fn(async () => true);
+    const pending = setThesisSignInHandler(handler);
+    expect(setSignInHandler).not.toHaveBeenCalled();
+    loadWidget();
+    await pending;
+    expect(setSignInHandler).toHaveBeenCalledWith(handler);
+    await setThesisSignInHandler(null);
+    expect(setSignInHandler).toHaveBeenLastCalledWith(null);
+  });
+
+  it('setThesisSignInHandler is a no-op on the server', async () => {
+    vi.stubGlobal('document', undefined);
+    try {
+      await expect(setThesisSignInHandler(async () => true)).resolves.toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(setSignInHandler).not.toHaveBeenCalled();
+  });
+
   it('helpers', () => {
     expect(loginButtonAttributes({ clientId: 'c', showLogo: false })['data-show-logo']).toBe('false');
-    expect(() => mountTheses('#missing', { chain: 'solana', mint: 'm' })).toThrow(/no element/);
+    expect(() => mountTheses('#missing', { chain: 'solana', mint: 'm', clientId: 'csid_a' })).toThrow(/no element/);
+    // @ts-expect-error clientId is required
+    expect(() => mountTheses(host, { chain: 'solana', mint: 'm' })).toThrow(/public client_id/);
+    expect(() => thesisWidgetAttributes({ chain: 'solana', mint: 'm', clientId: ' ' })).toThrow(
+      expect.objectContaining({ code: 'client_id_required' }),
+    );
+    expect(host.children).toHaveLength(0);
+    expect(thesisWidgetAttributes({ chain: 'solana', mint: 'm', clientId: 'csid_a' })['data-client-id']).toBe('csid_a');
     const stop = onWidgetEvents({});
     stop();
   });

@@ -198,10 +198,11 @@ describe('scope on thesis reads', () => {
     expect(JSON.parse(m.calls[2]!.body!)).toEqual({ body: 'gm', client_id: 'csid_app' });
     expect(JSON.parse(m.calls[3]!.body!)).toEqual({ body: 'yes', client_id: 'csid_app' });
     const live = tc.live('solana', MINT, { WebSocketImpl: FakeWS });
-    expect(live.url).toBe(`wss://id.cabalspy.xyz/thesis/v1/ws/solana/${MINT}?scope=instance&client_id=csid_app`);
-    expect(new ThesisClient({ fetch: m.fetch }).live('solana', MINT, { scope: 'global' }).url).toBe(
-      `wss://id.cabalspy.xyz/thesis/v1/ws/solana/${MINT}?scope=global`,
+    expect(live.url).toBe(`wss://id.cabalspy.xyz/thesis/v1/ws/solana/${MINT}?client_id=csid_app&scope=instance`);
+    expect(new ThesisClient({ clientId: 'csid_app', fetch: m.fetch }).live('solana', MINT, { scope: 'global' }).url).toBe(
+      `wss://id.cabalspy.xyz/thesis/v1/ws/solana/${MINT}?client_id=csid_app&scope=global`,
     );
-    expect(() => new ThesisClient({ scope: 'instance' })).toThrow(/needs clientId/);
+    // @ts-expect-error clientId is required
+    expect(() => new ThesisClient({ scope: 'instance' })).toThrow(/client_id/);
   });
 });

@@ -11,6 +11,7 @@
  * attributes. React components: `cabalspy-id/react` (also `cabalspy-id/widget/react`).
  */
 
+import { AuthenticationError } from './errors';
 import type { CabalSpyIDClaims, Chain, OidcScope } from './types';
 
 export const WIDGET_SRC = 'https://id.cabalspy.xyz/widget.js';
@@ -58,9 +59,23 @@ export interface CSIDGlobal {
   thesis?: {
     /** Lets thesis widgets write as this user (access token with the scope "thesis"). */
     setAccessToken(token: string | null): void;
+    /**
+     * Your own sign-in for the widget's "Sign in to write" (null removes it).
+     * See {@link setThesisSignInHandler}.
+     */
+    setSignInHandler?(handler: ThesisSignInHandler | null): void;
     clear(): void;
   };
 }
+
+/**
+ * Your page's sign-in for thesis widgets: obtain a thesis-capable access token
+ * for the person (e.g. your platform's own CabalSpy ID access token with the
+ * scope "thesis", from your backend), call `setThesisAccessToken(token)` (or
+ * `CSID.thesis.setAccessToken(token)`) and resolve `true`; resolve `false` when
+ * the person is not signed in.
+ */
+export type ThesisSignInHandler = () => Promise<boolean> | boolean;
 
 declare global {
   interface Window {
@@ -162,13 +177,15 @@ export interface ThesisWidgetOptions {
   /** Token mint / contract address. */
   mint: string;
   /**
-   * Your instance's client_id: loads the design saved in the dashboard (the
+   * Required. Your instance's PUBLIC client_id (`csid_...`, shown in the
+   * dashboard next to the API key; not the API key). The widget sends it on
+   * every thesis API call; it also loads the design saved in the dashboard (the
    * options below override it), credits posts to your app and enables `scope: 'instance'`.
    */
-  clientId?: string;
+  clientId: string;
   /** Default: dark */
   theme?: 'dark' | 'light';
-  /** `global` (default): theses from every platform. `instance`: only the ones written on your instance (needs clientId). */
+  /** `global` (default): theses from every platform. `instance`: only the ones written on your instance. */
   scope?: 'global' | 'instance';
   /** Initial order. Default: new */
   sort?: 'new' | 'top';
@@ -217,13 +234,20 @@ export function loginButtonAttributes(o: LoginButtonOptions): Record<string, str
   };
 }
 
-/** The widget's data-* attributes for a theses widget. */
+/** The widget's data-* attributes for a theses widget. Throws `client_id_required` without `clientId`. */
 export function thesisWidgetAttributes(o: ThesisWidgetOptions): Record<string, string | undefined> {
+  if (typeof o?.clientId !== 'string' || !o.clientId.trim()) {
+    throw new AuthenticationError(
+      "The theses widget needs your instance's public client_id (csid_..., shown in the dashboard next to the API key): " +
+        "{ clientId: 'csid_...' }. It is not the API key; never put the API key in a browser.",
+      { code: 'client_id_required', parameter: 'clientId', docs: 'https://docs.cabalspy.xyz/cabalspy-id/errors#client_id_required' },
+    );
+  }
   return {
     'data-csid-thesis': '',
     'data-chain': o.chain,
     'data-mint': o.mint,
-    'data-client-id': o.clientId,
+    'data-client-id': o.clientId.trim(),
     'data-theme': o.theme,
     'data-scope': o.scope,
     'data-sort': o.sort,
@@ -379,7 +403,8 @@ export function mountLoginButton(
 
 /**
  * Mounts the token theses widget into `target` (an element or a CSS selector).
- * `accessToken` (scope `thesis`) lets the signed-in person write right away.
+ * `clientId` (your instance's public client_id) is required. `accessToken`
+ * (scope `thesis`) lets the signed-in person write right away.
  */
 export function mountTheses(
   target: Element | string,
@@ -403,6 +428,26 @@ export function mountTheses(
 export async function setThesisAccessToken(token: string | null, scriptSrc?: string): Promise<void> {
   const csid = await loadCabalSpyIDWidget(scriptSrc);
   csid.thesis?.setAccessToken(token);
+}
+
+/**
+ * Lets your page handle the thesis widgets' "Sign in to write": the widget
+ * calls `handler` instead of the page's login button / popup. While a handler
+ * is set, the widget treats the page as the source of truth for sign-in (signed
+ * out on the page = signed out in the widget). `null` removes it. Waits for
+ * widget.js when it is not loaded yet; a no-op on the server.
+ *
+ *   setThesisSignInHandler(async () => {
+ *     const token = await fetch('/api/csid-thesis-token').then((r) => (r.ok ? r.text() : null));
+ *     if (!token) return false;
+ *     await setThesisAccessToken(token);
+ *     return true;
+ *   });
+ */
+export async function setThesisSignInHandler(handler: ThesisSignInHandler | null, scriptSrc?: string): Promise<void> {
+  if (!isBrowser()) return; // server rendering: nothing to register
+  const csid = await loadCabalSpyIDWidget(scriptSrc);
+  csid.thesis?.setSignInHandler?.(handler);
 }
 
 /** Starts the browser (public client) login flow. */

@@ -3,11 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AuthenticationError,
   BadRequestError,
+  CLIENT_ID_HEADER,
   CabalSpyID,
   ConnectionError,
   NotFoundError,
   PermissionError,
   PlanUserLimitError,
+  RateLimitError,
   ServerError,
   type Thesis,
   ThesisClient,
@@ -190,13 +192,14 @@ describe('ThesisClient', () => {
         summary: { theses: 1, bull: 1, bear: 0, authors: 1 },
       }),
     );
-    const tc = new ThesisClient({ fetch: m.fetch });
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: m.fetch });
     const page = await tc.list('solana', MINT, { sort: 'top', limit: 20 });
     expect(page.items[0]!.id).toBe('t1');
     expect(page.token.symbol).toBe('SOL');
     expect(page.summary.bull).toBe(1);
     expect(m.calls[0]!.url).toBe(`${base}/tokens/solana/${MINT}?sort=top&limit=20`);
     expect(m.calls[0]!.headers.authorization).toBeUndefined();
+    expect(m.calls[0]!.headers['x-csid-client-id']).toBe('csid_app');
   });
 
   it('writes with the user access token', async () => {
@@ -207,7 +210,7 @@ describe('ThesisClient', () => {
       if (req.url.endsWith('/me')) return json({ success: true, data: { can_post: true, can_reply: true, holder: true, paused: false, user: { csid_id: USER } } });
       return json({ success: true, data: thesis() }, 201);
     });
-    const tc = new ThesisClient({ fetch: m.fetch, accessToken: 'at-1' });
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: m.fetch, accessToken: 'at-1' });
     expect((await tc.me('solana', MINT)).can_post).toBe(true);
     await tc.post('solana', MINT, { body: 'gm', stance: 'bear' });
     await tc.reply('t1', 'agree');
@@ -216,13 +219,14 @@ describe('ThesisClient', () => {
     await tc.delete('t1');
     expect(m.calls.map((c) => [c.method, c.url.replace(base, ''), c.body ? JSON.parse(c.body) : null])).toEqual([
       ['GET', `/tokens/solana/${MINT}/me`, null],
-      ['POST', `/tokens/solana/${MINT}`, { body: 'gm', stance: 'bear' }],
-      ['POST', '/items/t1/replies', { body: 'agree' }],
+      ['POST', `/tokens/solana/${MINT}`, { body: 'gm', stance: 'bear', client_id: 'csid_app' }],
+      ['POST', '/items/t1/replies', { body: 'agree', client_id: 'csid_app' }],
       ['POST', '/items/t1/reactions', { emoji: '🚀', on: true }],
       ['POST', '/items/t1/report', { reason: 'scam', note: 'rug' }],
       ['DELETE', '/items/t1', null],
     ]);
     expect(m.calls.every((c) => c.headers.authorization === 'Bearer at-1')).toBe(true);
+    expect(m.calls.every((c) => c.headers['x-csid-client-id'] === 'csid_app')).toBe(true);
   });
 
   it('needs a token to write, and maps API errors', async () => {
@@ -231,7 +235,7 @@ describe('ThesisClient', () => {
         ? json({ success: false, error: { code: 'not_a_holder', message: 'Only holders can post a thesis' } }, 403)
         : json({ success: false, error: { code: 'invalid_token', message: 'Your sign-in expired.' } }, 401),
     );
-    const tc = new ThesisClient({ fetch: m.fetch });
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: m.fetch });
     await expect(tc.post('solana', MINT, { body: 'x' })).rejects.toMatchObject({ code: 'sign_in_required' });
     expect(m.calls).toHaveLength(0);
     tc.setAccessToken('at');
@@ -239,6 +243,62 @@ describe('ThesisClient', () => {
     await expect(tc.reply('t1', 'x')).rejects.toBeInstanceOf(AuthenticationError);
     // @ts-expect-error unknown chain
     expect(() => tc.live('tron', MINT)).toThrow(BadRequestError);
+  });
+
+  it('requires the public client_id at construction', () => {
+    for (const opts of [undefined, {}, { clientId: '' }, { clientId: '   ' }, { clientId: null }]) {
+      let err: unknown;
+      try {
+        new ThesisClient(opts as never);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(AuthenticationError);
+      expect(err).toMatchObject({ code: 'client_id_required', parameter: 'clientId' });
+      expect((err as Error).message).toMatch(/public client_id/);
+      expect((err as Error).message).toMatch(/not the API key/);
+    }
+    expect(new ThesisClient({ clientId: ' csid_app ' }).clientId).toBe('csid_app');
+  });
+
+  it('sends X-CSID-Client-Id on every call, with or without a user token', async () => {
+    const m = mockFetch((req) =>
+      req.url.includes('/summary')
+        ? json({ success: true, data: { theses: 0, bull: 0, bear: 0, authors: 0, token: {} } })
+        : req.url.includes('/me/notifications')
+          ? json({ success: true, data: { unread: 0, items: [] } })
+          : json({ success: true, data: thesis() }),
+    );
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: m.fetch });
+    await tc.summary('solana', MINT);
+    await tc.get('t1');
+    tc.setAccessToken('at');
+    await tc.notifications();
+    expect(CLIENT_ID_HEADER).toBe('X-CSID-Client-Id');
+    expect(m.calls).toHaveLength(3);
+    expect(m.calls.map((c) => c.headers['x-csid-client-id'])).toEqual(['csid_app', 'csid_app', 'csid_app']);
+    // the header, not the query, carries it (global scope)
+    expect(m.calls.map((c) => new URL(c.url).searchParams.get('client_id'))).toEqual([null, null, null]);
+  });
+
+  it('maps client_id errors to the SDK error classes with their code', async () => {
+    const m = mockFetch((req) => {
+      if (req.url.endsWith('/items/a')) return apiError(401, 'client_id_required', 'client_id is required');
+      if (req.url.endsWith('/items/b')) return apiError(401, 'invalid_client', 'Unknown or inactive client_id');
+      if (req.url.endsWith('/items/c')) return apiError(403, 'origin_not_allowed', 'Origin not allowed for this client_id');
+      return apiError(429, 'rate_limited', 'Too many requests', {}, { 'Retry-After': '60' });
+    });
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: m.fetch });
+    const fail = (id: string) => tc.get(id).catch((e: unknown) => e);
+    const [a, b, c, d] = await Promise.all([fail('a'), fail('b'), fail('c'), fail('d')]);
+    expect(a).toBeInstanceOf(AuthenticationError);
+    expect(a).toMatchObject({ status: 401, code: 'client_id_required', docs: 'https://docs.cabalspy.xyz/cabalspy-id/errors#client_id_required' });
+    expect(b).toBeInstanceOf(AuthenticationError);
+    expect(b).toMatchObject({ status: 401, code: 'invalid_client' });
+    expect(c).toBeInstanceOf(PermissionError);
+    expect(c).toMatchObject({ status: 403, code: 'origin_not_allowed' });
+    expect(d).toBeInstanceOf(RateLimitError);
+    expect(d).toMatchObject({ status: 429, code: 'rate_limited', retryAfter: 60 });
   });
 });
 
@@ -328,14 +388,18 @@ describe('stream: theses', () => {
 
 describe('ThesisClient.live()', () => {
   it('emits public live events and treats 1008 as final', async () => {
-    const live = new ThesisClient({ fetch: (() => {}) as never }).live('solana', MINT, { WebSocketImpl: FakeWS, reconnectDelay: 5 });
+    const live = new ThesisClient({ clientId: 'csid_app', fetch: (() => {}) as never }).live('solana', MINT, {
+      WebSocketImpl: FakeWS,
+      reconnectDelay: 5,
+    });
     const got: string[] = [];
     const errors: unknown[] = [];
     live.on('thesis', (t) => got.push(t.id)).on('reaction', (r) => got.push(`r:${r.id}`)).on('removed', (r) => got.push(`x:${r.id}`));
     live.on('error', (e) => errors.push(e));
     const p = live.connect();
     const ws = FakeWS.all[0]!;
-    expect(ws.url).toBe(`wss://id.cabalspy.xyz/thesis/v1/ws/solana/${MINT}`);
+    expect(ws.url).toBe(`wss://id.cabalspy.xyz/thesis/v1/ws/solana/${MINT}?client_id=csid_app`);
+    expect(new URL(ws.url).searchParams.get('client_id')).toBe('csid_app');
     ws.open();
     await p;
     ws.push({ type: 'thesis', chain: 'solana', mint: MINT, data: thesis('t5') });
@@ -351,13 +415,64 @@ describe('ThesisClient.live()', () => {
 
   it('reconnects after a drop', async () => {
     vi.useFakeTimers();
-    const live = new ThesisClient({ fetch: (() => {}) as never }).live('base', '0xabc', { WebSocketImpl: FakeWS, reconnectDelay: 10 });
+    const live = new ThesisClient({ clientId: 'csid_app', fetch: (() => {}) as never }).live('base', '0xabc', {
+      WebSocketImpl: FakeWS,
+      reconnectDelay: 10,
+    });
     const p = live.connect();
     FakeWS.all[0]!.open();
     await p;
     FakeWS.all[0]!.close(1006);
     await vi.advanceTimersByTimeAsync(300);
     expect(FakeWS.all).toHaveLength(2);
+    live.close();
+    vi.useRealTimers();
+  });
+
+  it('4401 and 4403 are final and map to the client_id error codes', async () => {
+    vi.useFakeTimers();
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: (() => {}) as never });
+    const cases: [number, string, unknown, string][] = [
+      [4401, 'client_id_required', AuthenticationError, 'client_id_required'],
+      [4401, 'invalid_client', AuthenticationError, 'invalid_client'],
+      [4403, 'origin_not_allowed', PermissionError, 'origin_not_allowed'],
+    ];
+    for (const [code, reason, cls, expected] of cases) {
+      FakeWS.all = [];
+      const live = tc.live('solana', MINT, { WebSocketImpl: FakeWS, reconnectDelay: 5 });
+      const errors: unknown[] = [];
+      live.on('error', (e) => errors.push(e));
+      const p = live.connect().catch((e: unknown) => e);
+      FakeWS.all[0]!.onclose?.({ code, reason });
+      const rejected = await p;
+      expect(rejected).toBeInstanceOf(cls as never);
+      expect(rejected).toMatchObject({ code: expected });
+      expect(errors[0]).toMatchObject({ code: expected });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(FakeWS.all).toHaveLength(1); // no reconnect
+    }
+    vi.useRealTimers();
+  });
+
+  it('4429 backs off 60 s before reconnecting', async () => {
+    vi.useFakeTimers();
+    const live = new ThesisClient({ clientId: 'csid_app', fetch: (() => {}) as never }).live('solana', MINT, {
+      WebSocketImpl: FakeWS,
+      reconnectDelay: 10,
+    });
+    const errors: unknown[] = [];
+    live.on('error', (e) => errors.push(e));
+    const p = live.connect();
+    FakeWS.all[0]!.open();
+    await p;
+    FakeWS.all[0]!.onclose?.({ code: 4429, reason: 'rate_limited' });
+    expect(errors[0]).toBeInstanceOf(RateLimitError);
+    expect(errors[0]).toMatchObject({ code: 'rate_limited', retryAfter: 60 });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(FakeWS.all).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeWS.all).toHaveLength(2);
+    expect(new URL(FakeWS.all[1]!.url).searchParams.get('client_id')).toBe('csid_app');
     live.close();
     vi.useRealTimers();
   });

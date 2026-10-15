@@ -32,8 +32,9 @@ console.log(`smoke ok on Node ${process.version} (SDK ${esm.SDK_VERSION})`);
   assert.equal(api.NotFoundError, rootEsm.NotFoundError);
   assert.equal(thesis.ThesisClient, rootEsm.ThesisClient);
   assert.equal(thesis.CabalSpyID, rootEsm.CabalSpyID);
+  assert.throws(() => new thesis.ThesisClient({}), /client_id/);
   assert.equal(typeof widget.mountTheses, 'function');
-  assert.equal(typeof widget.thesisWidgetAttributes({ chain: 'solana', mint: 'M' })['data-mint'], 'string');
+  assert.equal(typeof widget.thesisWidgetAttributes({ chain: 'solana', mint: 'M', clientId: 'csid_x' })['data-mint'], 'string');
   const rootCjs = require('cabalspy-id');
   for (const sub of ['cabalspy-id/api', 'cabalspy-id/thesis']) {
     const m = require(sub);

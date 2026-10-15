@@ -71,7 +71,7 @@ describe('ThesisClient: notifications', () => {
         },
       });
     });
-    const tc = new ThesisClient({ fetch: m.fetch, accessToken: 'at' });
+    const tc = new ThesisClient({ clientId: 'csid_app', fetch: m.fetch, accessToken: 'at' });
     expect((await tc.notifications()).items[0]!.kind).toBe('post_hidden');
     await tc.markNotificationsRead();
     await tc.appeal(7, 'Please look again, this was a real analysis.');
@@ -84,7 +84,7 @@ describe('ThesisClient: notifications', () => {
       ['POST', '/me/notifications/7/appeal', { message: 'Please look again, this was a real analysis.' }],
     ]);
     expect(m.calls.every((c) => c.headers.authorization === 'Bearer at')).toBe(true);
-    await expect(new ThesisClient({ fetch: m.fetch }).notifications()).rejects.toMatchObject({ code: 'sign_in_required' });
+    await expect(new ThesisClient({ clientId: 'csid_app', fetch: m.fetch }).notifications()).rejects.toMatchObject({ code: 'sign_in_required' });
   });
 });
 

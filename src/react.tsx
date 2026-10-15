@@ -20,11 +20,13 @@ import {
   type CabalSpyIDLogoutEvent,
   type CabalSpyIDUserSummary,
   type LoginButtonOptions,
+  type ThesisSignInHandler,
   type ThesisWidgetOptions,
   isBrowser,
   loadCabalSpyIDWidget,
   loginButtonAttributes,
   onWidgetEvents,
+  setThesisSignInHandler,
   thesisWidgetAttributes,
 } from './widget';
 
@@ -37,6 +39,7 @@ export {
   type CabalSpyIDUserSummary,
   type CSIDGlobal,
   type LoginButtonOptions,
+  type ThesisSignInHandler,
   type ThesisWidgetOptions,
 } from './widget';
 
@@ -104,6 +107,14 @@ export interface CabalSpyThesesProps extends ThesisWidgetOptions {
    * through the widget this is set automatically. `null` signs the widget out.
    */
   accessToken?: string | null;
+  /**
+   * Your own sign-in for the widget's "Sign in to write" (instead of the page's
+   * login button / popup): get a thesis-capable access token for the person,
+   * pass it on (the `accessToken` prop or `setThesisAccessToken`) and resolve
+   * `true`; resolve `false` when they are not signed in. While set, the page is
+   * the source of truth for sign-in. Removed on unmount.
+   */
+  onSignIn?: ThesisSignInHandler;
   scriptSrc?: string;
   className?: string;
   style?: CSSProperties;
@@ -114,12 +125,27 @@ export interface CabalSpyThesesProps extends ThesisWidgetOptions {
  * Token theses widget: holders' theses on a token with their real position,
  * replies, reactions, live updates.
  *
- *   <CabalSpyTheses chain="solana" mint={mint} theme="dark" accessToken={accessToken} />
+ *   <CabalSpyTheses chain="solana" mint={mint} clientId="csid_..." theme="dark" accessToken={accessToken} />
  */
 export function CabalSpyTheses(props: CabalSpyThesesProps) {
-  const { accessToken, scriptSrc } = props;
+  const { accessToken, scriptSrc, onSignIn } = props;
   const attrs = thesisWidgetAttributes(props);
   const key = JSON.stringify(attrs);
+  const signIn = useRef(onSignIn);
+  signIn.current = onSignIn;
+  const hasSignIn = onSignIn !== undefined;
+
+  useEffect(() => {
+    if (!isBrowser() || !hasSignIn) return;
+    let active = true;
+    // A stable wrapper, so a new onSignIn function does not re-register.
+    const handler: ThesisSignInHandler = () => (active && signIn.current ? signIn.current() : false);
+    setThesisSignInHandler(handler, scriptSrc).catch(() => undefined);
+    return () => {
+      active = false;
+      setThesisSignInHandler(null, scriptSrc).catch(() => undefined);
+    };
+  }, [hasSignIn, scriptSrc]);
 
   useEffect(() => {
     if (!isBrowser()) return;
