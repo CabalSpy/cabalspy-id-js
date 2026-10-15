@@ -30,6 +30,12 @@ and not the API key. The Data API (`CabalSpyID`, API key) is unchanged.
 - `ThesisLive` handles the close codes 4401 (`client_id_required` / `invalid_client`) and 4403
   (`origin_not_allowed`) as final (no reconnect) and backs off 60 s after 4429 (`rate_limited`).
 - Exports `CLIENT_ID_HEADER`, `THESIS_WS_CLOSE_CODES` and `thesisCloseError()`.
+- `setThesisSignInHandler(fn | null)` in `cabalspy-id/widget` (forwards to widget.js'
+  `CSID.thesis.setSignInHandler`, waiting for widget.js when needed) and the `onSignIn` prop of
+  `<CabalSpyTheses>` (removed on unmount): the widget's "Sign in to write" calls your function
+  instead of the page's login button / popup; it gets a thesis-capable token, passes it with
+  `setThesisAccessToken(token)` and resolves `true` (`false` = not signed in). While a handler is
+  set, the page is the source of truth for sign-in. New type `ThesisSignInHandler`.
 
 ## [0.5.1] - 2026-10-15
 

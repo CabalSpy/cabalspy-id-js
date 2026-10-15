@@ -59,9 +59,23 @@ export interface CSIDGlobal {
   thesis?: {
     /** Lets thesis widgets write as this user (access token with the scope "thesis"). */
     setAccessToken(token: string | null): void;
+    /**
+     * Your own sign-in for the widget's "Sign in to write" (null removes it).
+     * See {@link setThesisSignInHandler}.
+     */
+    setSignInHandler?(handler: ThesisSignInHandler | null): void;
     clear(): void;
   };
 }
+
+/**
+ * Your page's sign-in for thesis widgets: obtain a thesis-capable access token
+ * for the person (e.g. your platform's own CabalSpy ID access token with the
+ * scope "thesis", from your backend), call `setThesisAccessToken(token)` (or
+ * `CSID.thesis.setAccessToken(token)`) and resolve `true`; resolve `false` when
+ * the person is not signed in.
+ */
+export type ThesisSignInHandler = () => Promise<boolean> | boolean;
 
 declare global {
   interface Window {
@@ -414,6 +428,25 @@ export function mountTheses(
 export async function setThesisAccessToken(token: string | null, scriptSrc?: string): Promise<void> {
   const csid = await loadCabalSpyIDWidget(scriptSrc);
   csid.thesis?.setAccessToken(token);
+}
+
+/**
+ * Lets your page handle the thesis widgets' "Sign in to write": the widget
+ * calls `handler` instead of the page's login button / popup. While a handler
+ * is set, the widget treats the page as the source of truth for sign-in (signed
+ * out on the page = signed out in the widget). `null` removes it. Waits for
+ * widget.js when it is not loaded yet.
+ *
+ *   setThesisSignInHandler(async () => {
+ *     const token = await fetch('/api/csid-thesis-token').then((r) => (r.ok ? r.text() : null));
+ *     if (!token) return false;
+ *     await setThesisAccessToken(token);
+ *     return true;
+ *   });
+ */
+export async function setThesisSignInHandler(handler: ThesisSignInHandler | null, scriptSrc?: string): Promise<void> {
+  const csid = await loadCabalSpyIDWidget(scriptSrc);
+  csid.thesis?.setSignInHandler?.(handler);
 }
 
 /** Starts the browser (public client) login flow. */

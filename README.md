@@ -53,7 +53,7 @@ One codebase, one version line. The focused packages re-export parts of `cabalsp
 | `cabalspy-id` | everything |
 | `cabalspy-id/api` | `CabalSpyID`, `CabalSpyIDStream`, `CabalSpyIDAuth`, `verifyWebhook`, errors and Data API types |
 | `cabalspy-id/thesis` | `CabalSpyID` (thesis methods), `ThesisClient`, `ThesisLive`, `ThesesStream`, thesis types |
-| `cabalspy-id/widget` | browser only: `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `startLogin`, `onWidgetEvents`, `loadCabalSpyIDWidget` |
+| `cabalspy-id/widget` | browser only: `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `setThesisSignInHandler`, `startLogin`, `onWidgetEvents`, `loadCabalSpyIDWidget` |
 | `cabalspy-id/react` (= `cabalspy-id/widget/react`) | `<CabalSpyLogin />`, `<CabalSpyTheses />`, `useCabalSpyID()` |
 
 Classes are shared between entry points (`instanceof` works across them, ESM and CommonJS).
@@ -294,6 +294,22 @@ const { accessToken } = useCabalSpyID({ clientId: 'csid_...' });
 `clientId` (required) identifies your instance: the widget loads the design saved in the dashboard and credits posts to your app. Every design setting can be overridden by a prop (mapped to the widget's `data-*` attribute): `theme`, `scope`, `sort`, `font`, `radius`, `bg`, `card`, `text`, `muted`, `border`, `accent`, `accentText`, `bull`, `bear`, `showHeader`, `showSentiment`, `compact`, `height`.
 
 Plain HTML: `<div data-csid-thesis data-chain="solana" data-mint="..." data-client-id="csid_..." data-theme="dark"></div>` with `widget.js`; `CSID.thesis.setAccessToken(token)` lets the signed-in person write without signing in again inside the widget (after a browser login through the widget this happens automatically).
+
+**Your own sign-in.** If people sign in to your platform with CabalSpy ID already, let the widget's "Sign in to write" use it instead of the page's login button / popup: `setThesisSignInHandler(fn)` (from `cabalspy-id/widget`, or `CSID.thesis.setSignInHandler(fn)` in plain HTML) or the `onSignIn` prop of `<CabalSpyTheses>`. `fn` gets a thesis-capable access token for the person (for example your platform's CabalSpy ID access token with the scope `thesis`, from your backend), passes it on with `setThesisAccessToken(token)` and resolves `true`; it resolves `false` when the person is not signed in. While a handler is set, the widget treats your page as the source of truth for sign-in (signed out on the page = signed out in the widget). `setThesisSignInHandler(null)` removes it; `<CabalSpyTheses>` removes it on unmount.
+
+```tsx
+<CabalSpyTheses
+  chain="solana"
+  mint={mint}
+  clientId="csid_..."
+  onSignIn={async () => {
+    const token = await fetch('/api/csid-thesis-token').then((r) => (r.ok ? r.text() : null));
+    if (!token) return false;
+    await setThesisAccessToken(token);
+    return true;
+  }}
+/>
+```
 
 ### Your own UI in the browser: `ThesisClient`
 

@@ -11,6 +11,7 @@ import {
   mountTheses,
   onWidgetEvents,
   setThesisAccessToken,
+  setThesisSignInHandler,
   startLogin,
   thesisWidgetAttributes,
 } from '../src/widget';
@@ -18,6 +19,7 @@ import {
 const mount = vi.fn();
 const setAccessToken = vi.fn();
 const login = vi.fn(async () => undefined);
+const setSignInHandler = vi.fn();
 
 function loadWidget() {
   const script = document.querySelector<HTMLScriptElement>(`script[src="${WIDGET_SRC}"]`);
@@ -29,7 +31,7 @@ function loadWidget() {
     setUser: vi.fn(),
     signOut: vi.fn(),
     onLogin: vi.fn(),
-    thesis: { setAccessToken, clear: vi.fn() },
+    thesis: { setAccessToken, setSignInHandler, clear: vi.fn() },
   };
   script?.dispatchEvent(new Event('load'));
 }
@@ -106,6 +108,17 @@ describe('cabalspy-id/widget', () => {
     expect(setAccessToken).toHaveBeenLastCalledWith(null);
     await startLogin({ clientId: 'csid_a', scope: ['openid', 'thesis'] });
     expect(login).toHaveBeenCalledWith({ clientId: 'csid_a', redirectUri: undefined, scope: 'openid thesis' });
+  });
+
+  it('setThesisSignInHandler waits for widget.js and forwards the handler', async () => {
+    const handler = vi.fn(async () => true);
+    const pending = setThesisSignInHandler(handler);
+    expect(setSignInHandler).not.toHaveBeenCalled();
+    loadWidget();
+    await pending;
+    expect(setSignInHandler).toHaveBeenCalledWith(handler);
+    await setThesisSignInHandler(null);
+    expect(setSignInHandler).toHaveBeenLastCalledWith(null);
   });
 
   it('helpers', () => {
