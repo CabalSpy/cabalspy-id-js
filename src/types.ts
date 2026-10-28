@@ -962,6 +962,15 @@ export type InboundEventResult =
       wallets_added: PlatformWalletAdded[];
     }
   | { accepted: true; result: 'deleted'; external_id: string; deleted: boolean; unlinked: boolean }
+  | {
+      accepted: true;
+      result: 'wallets_removed';
+      external_id: string;
+      wallets_removed: string[];
+      /** Kept wallets, e.g. code `last_wallet` or `wallet_not_found`. */
+      wallets_not_removed: { address: string; code: string }[];
+    }
+  | { accepted: true; result: 'ignored'; external_id: string; note: string }
   | { accepted: true; result: 'unknown_user' | 'waiting_for_wallet'; external_id: string }
   | { accepted: false; error: { code: string; message: string } };
 
