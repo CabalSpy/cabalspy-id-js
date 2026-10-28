@@ -139,6 +139,7 @@ export {
   type WebhookEventDataMap,
   type TypedWebhookEvent,
   type PlatformUserCreatedData,
+  type PlatformUserWebhookRef,
   type PlatformUserClaimedData,
   type PlatformUserXConnectedData,
   type WalletAddedData,

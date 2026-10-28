@@ -602,14 +602,25 @@ export interface ThesisReactionData {
   reactions: Partial<Record<ThesisEmoji | string, number>>;
 }
 
+/**
+ * Added by the server to every per-user webhook about one of YOUR platform users
+ * (white-label): your own user id and their CabalSpy ID.
+ */
+export interface PlatformUserWebhookRef {
+  /** Your user id on your platform, as passed on create or import. */
+  external_id: string;
+  /** The user's CabalSpy ID (same as `sub`). */
+  csid_id: string;
+}
+
 /** `data` of a `platform_user.created` webhook: a platform user was created (API, import or inbound URL). */
-export interface PlatformUserCreatedData {
+export interface PlatformUserCreatedData extends PlatformUserWebhookRef {
   sub: string;
   wallets: { address: string; family: WalletFamily; chains: Chain[] }[];
 }
 
 /** `data` of a `platform_user.claimed` webhook: the person took their account into their own CabalSpy ID. */
-export interface PlatformUserClaimedData {
+export interface PlatformUserClaimedData extends PlatformUserWebhookRef {
   /** The person's own CabalSpy ID; their csid_id changes to this. */
   sub: string;
   previous_csid_id: string;
@@ -618,19 +629,19 @@ export interface PlatformUserClaimedData {
 }
 
 /** `data` of a `platform_user.x_connected` webhook. */
-export interface PlatformUserXConnectedData {
+export interface PlatformUserXConnectedData extends PlatformUserWebhookRef {
   sub: string;
   x: { id: string; username: string | null; name: string | null };
 }
 
 /** `data` of a `wallet.added` webhook: wallets submitted by the platform (not payment-verified). */
-export interface WalletAddedData extends PlatformWalletAdded {
+export interface WalletAddedData extends PlatformWalletAdded, PlatformUserWebhookRef {
   sub: string;
   verified: false;
 }
 
 /** `data` of a `verification.expired` webhook: a platform-started verification ended without payment. */
-export interface VerificationExpiredData {
+export interface VerificationExpiredData extends PlatformUserWebhookRef {
   sub: string;
   verification_id: string;
   address: string;
