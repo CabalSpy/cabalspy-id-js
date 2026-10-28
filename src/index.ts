@@ -5,6 +5,8 @@
  * - CabalSpyIDAuth:   "Login with CabalSpy ID" (OpenID Connect, PKCE, ID token verification)
  * - ThesisClient:     public token thesis API for browsers (user access token) and live()
  * - verifyWebhook:    Standard Webhooks signature verification
+ * - White-label:      platform users by your own user id (createPlatformUser, importAllPlatformUsers, …)
+ *                     and trading competitions between them (createCompetition, …)
  * - cabalspy-id/react: <CabalSpyLogin />, <CabalSpyTheses /> and useCabalSpyID()
  *
  * Focused entry points: cabalspy-id/api, cabalspy-id/thesis, cabalspy-id/widget (browser).
@@ -40,6 +42,25 @@ export {
   type ReactToThesisParams,
   type ReportThesisParams,
   type DeleteThesisParams,
+  type PlatformUserRef,
+  type PlatformUserId,
+  type UpdatePlatformUserParams,
+  type PlatformUsersParams,
+  type AddPlatformWalletsParams,
+  type DeletePlatformWalletParams,
+  type StartWalletVerificationParams,
+  type PlatformUserProfileParams,
+  type PlatformLeaderboardParams,
+  type PlatformClaimLinkParams,
+  type PlatformXConnectParams,
+  type ImportPlatformUsersOptions,
+  type ImportPlatformUsersProgress,
+  type ImportPlatformUsersResult,
+  type CreateCompetitionParams,
+  type UpdateCompetitionParams,
+  type CompetitionsParams,
+  type CompetitionPageParams,
+  type CompetitionMemberParams,
 } from './client';
 
 export {
@@ -101,7 +122,14 @@ export {
 
 export { decodeJwt, JwksCache, type EcJwk, type Jwks, type JwtHeader, type DecodedJwt } from './jwt';
 
-export { verifyWebhook, signWebhook, type VerifyWebhookOptions, type HeaderSource } from './webhooks';
+export {
+  verifyWebhook,
+  verifyTypedWebhook,
+  isWebhookEvent,
+  signWebhook,
+  type VerifyWebhookOptions,
+  type HeaderSource,
+} from './webhooks';
 
 export {
   CabalSpyIDError,
@@ -110,6 +138,7 @@ export {
   PermissionError,
   PlanUserLimitError,
   NotFoundError,
+  ConflictError,
   RateLimitError,
   ServerError,
   ConnectionError,
@@ -117,6 +146,7 @@ export {
   OAuthError,
   TokenVerificationError,
   WebhookVerificationError,
+  PlatformImportError,
   type ApiErrorBody,
   type RateLimitInfo,
   type CabalSpyIDErrorOptions,
