@@ -4,6 +4,54 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-10-31
+
+Callouts, an extra that CabalSpy switches on per instance on request: a user calls a
+token, the price and market cap are stamped and tracked (every minute for the first
+24 hours, then scored on candles; after that every 5 minutes while the token is active,
+until it stays below a $10k market cap for 24 hours in a row). Plus callout competitions.
+
+### Added
+
+- Callouts on `CabalSpyID`: `createCallout` (`external_id` or `{ csid_id }`, `chain`, `mint`,
+  optional `note`), `removeCallout`, `callouts` / `calloutsRaw` / `iterCallouts`, `callout`,
+  `calloutStats`, `calloutLeaderboard` / `calloutLeaderboardRaw` / `iterCalloutLeaderboard`,
+  `calloutSettings`, `updateCalloutSettings`.
+- `CalloutsStream` and `csid.calloutsStream({ chain?, mint? })` for `/v1/callouts/stream`:
+  `callout.created`, `callout.update`, `callout.milestone`, `callout.scored`, `callout.final`,
+  `callout.removed`, reconnects, heartbeat watchdog and `for await`. New option
+  `calloutsStreamUrl`, constant `DEFAULT_CALLOUTS_STREAM_URL`.
+- Callout competitions: `createCompetition({ kind: 'callouts', … })` with the callout metrics
+  (`avg_peak_x`, `best_peak_x`, `sum_peak_x`, `hit_rate`, `callouts`), `chain: 'all'`,
+  `min_callouts` and `hit_x`. `CreateCompetitionParams` is now a union of
+  `CreateTradingCompetitionParams` and `CreateCalloutCompetitionParams`; kind-specific fields
+  are checked before sending.
+- Types: `Callout` (`at_call`, `now`, `peak`, `score_x`, `tracking` with `below_10k_since`,
+  `first_day`), `CalloutStats`, `CalloutPeriodStats`, `CalloutLeaderboardEntry`,
+  `CalloutLeaderboardResponse`, `CalloutSettings`, `CalloutUpdate`, `CalloutMilestone`,
+  `CalloutRemoved`, `CalloutStreamEvent`, `CalloutCompetitionStanding`,
+  `TradingCompetitionStanding`; constants `CALLOUT_LEADERBOARD_SORTS`, `CALLOUT_MILESTONES`,
+  `CALLOUT_WHO`, `CALLOUT_MAX_NOTE`, `CALLOUT_ACTIVE_MCAP_USD`, `COMPETITION_KINDS`,
+  `CALLOUT_COMPETITION_METRICS`.
+- Typed webhooks `callout.created`, `callout.milestone`, `callout.scored` and `callout.final`
+  (`data.callout`, plus `data.milestone_x`) in `WebhookEventDataMap`.
+- `me().features`: the extras switched on for the instance (e.g. `callouts`).
+- Errors: `FeatureNotEnabledError` (403 `feature_not_enabled`, a `PermissionError`),
+  `CalloutCooldownError` (429 `callout_cooldown`, a `RateLimitError` with `retryAfter`, never
+  retried automatically) and `UnprocessableError` (422, `no_price`). `already_called` is a
+  `ConflictError`, `callout_not_found` a `NotFoundError`.
+- README section "Callouts (on request)" and `examples/callouts.mjs`.
+
+### Changed
+
+- `Competition` has `kind`; `chain` can be `'all'`; `min_trades` / `min_volume_usd` are only
+  present on trading competitions and `min_callouts` / `hit_x` only on callout competitions
+  (all four are optional in the type now).
+- `CompetitionStanding` holds either trading or callout stats, so its stat fields are optional;
+  use `TradingCompetitionStanding` or `CalloutCompetitionStanding` for the exact shape.
+- `CompetitionMetric` now includes the callout metrics (`TradingCompetitionMetric` is the old set;
+  `COMPETITION_METRICS` is unchanged).
+
 ## [0.6.0] - 2026-10-28
 
 White-label: a platform keeps its own login, imports its users (by its own user id,
@@ -187,6 +235,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.7.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.0...v0.5.1

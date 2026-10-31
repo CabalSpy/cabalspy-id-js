@@ -3,6 +3,8 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  type CalloutCreatedData,
+  type CalloutMilestoneData,
   type CompetitionStandingsData,
   type CompetitionStartedData,
   WebhookVerificationError,
@@ -165,5 +167,73 @@ describe('white-label and competition webhooks', () => {
   it('rejects a tampered white-label delivery', async () => {
     const { payload, headers } = await deliver('wallet.added', events['wallet.added']);
     await expect(verifyWebhook({ payload: payload.replace('0xabc', '0xdef'), headers, secret: SECRET, now })).rejects.toMatchObject({ code: 'invalid_signature' });
+  });
+});
+
+describe('callout webhooks', () => {
+  const callout = {
+    id: 'co-1',
+    chain: 'solana',
+    mint: 'So1',
+    token: { name: 'T', symbol: 'T', logo: null },
+    author: { csid_id: 'c-1', external_id: 'u1', name: null, username: null, avatar_url: null, kol: false },
+    note: null,
+    called_at: '2026-10-31T12:00:00Z',
+    window_ends_at: '2026-11-01T12:00:00Z',
+    status: 'tracking',
+    at_call: { price_usd: 1, market_cap_usd: 100000 },
+    now: { price_usd: 2, market_cap_usd: 200000, x: 2, at: '2026-10-31T13:00:00Z' },
+    peak: { price_usd: 5, market_cap_usd: 500000, x: 5, at: '2026-10-31T12:30:00Z' },
+    score_x: 5,
+    source: 'birdeye',
+    tracking: { active: true, phase: 'first_day', next_check_at: null, below_10k_since: null, daily_checks: 0, stopped_at: null, stop_reason: null },
+  };
+  const firstDay = { kind: 'candles', entry_price_usd: 1, peak_x: 5, close_x: 2, minutes_to_peak: 30, flags: [] };
+  const events = {
+    'callout.created': { callout },
+    'callout.milestone': { callout, milestone_x: 5 },
+    'callout.scored': { callout: { ...callout, first_day: firstDay } },
+    'callout.final': { callout: { ...callout, status: 'final', tracking: { ...callout.tracking, active: false, phase: 'stopped', stop_reason: 'inactive', stopped_at: '2026-11-03T00:00:00Z' } } },
+  };
+
+  async function deliver(type: string, data: unknown) {
+    const payload = JSON.stringify({ id: `evt_${type}`, type, created_at: '2026-10-31T00:00:00Z', sandbox: false, data });
+    const headers = { 'webhook-id': `evt_${type}`, 'webhook-timestamp': String(now), 'webhook-signature': serverSign(rawKey, `evt_${type}`, now, payload) };
+    return { payload, headers };
+  }
+
+  it('narrows each callout event to its typed data', async () => {
+    const seen: string[] = [];
+    for (const [type, data] of Object.entries(events)) {
+      const { payload, headers } = await deliver(type, data);
+      const event = await verifyTypedWebhook({ payload, headers, secret: SECRET, now });
+      switch (event.type) {
+        case 'callout.created':
+          seen.push(`created:${event.data.callout.score_x}`);
+          break;
+        case 'callout.milestone':
+          seen.push(`milestone:${event.data.milestone_x}`);
+          break;
+        case 'callout.scored':
+          seen.push(`scored:${event.data.callout.first_day.peak_x}`);
+          break;
+        case 'callout.final':
+          seen.push(`final:${event.data.callout.tracking.stop_reason}`);
+          break;
+        default:
+          seen.push('other');
+      }
+    }
+    expect(seen).toEqual(['created:5', 'milestone:5', 'scored:5', 'final:inactive']);
+
+    const { payload, headers } = await deliver('callout.milestone', events['callout.milestone']);
+    const event = await verifyWebhook({ payload, headers, secret: SECRET, now });
+    expect(isWebhookEvent(event, 'callout.created')).toBe(false);
+    if (isWebhookEvent(event, 'callout.milestone', 'callout.created')) {
+      const data: CalloutMilestoneData | CalloutCreatedData = event.data;
+      expect(data.callout.id).toBe('co-1');
+    } else {
+      throw new Error('not narrowed');
+    }
   });
 });

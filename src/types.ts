@@ -77,7 +77,15 @@ export interface MeResponse {
   /** Whether `scope=global` is available (Enterprise). */
   global_scope: boolean;
   users_with_data: number;
+  /**
+   * Extras switched on for this instance by CabalSpy, e.g. `callouts`.
+   * Empty when none are on.
+   */
+  features: InstanceFeature[];
 }
+
+/** Extras CabalSpy switches on per instance on request. */
+export type InstanceFeature = 'callouts' | (string & {});
 
 // ── users ───────────────────────────────────────────────────────────────────
 
@@ -565,7 +573,12 @@ export type WebhookEventType =
   | 'competition.started'
   | 'competition.updated'
   | 'competition.standings'
-  | 'competition.ended';
+  | 'competition.ended'
+  // callouts (an extra, switched on per instance)
+  | 'callout.created'
+  | 'callout.milestone'
+  | 'callout.scored'
+  | 'callout.final';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
   /** Event id; the same on every retry. Dedupe on it. */
@@ -690,6 +703,31 @@ export interface CompetitionEndedData {
   metric?: CompetitionMetric;
 }
 
+/** `data` of a `callout.created` webhook (instance level, no `sub`): one of your users called a token. */
+export interface CalloutCreatedData {
+  callout: Callout;
+}
+
+/** `data` of a `callout.milestone` webhook: a callout reached a new peak multiple (2, 3, 5, 10, 20, 50, 100). */
+export interface CalloutMilestoneData {
+  callout: Callout;
+  /** The milestone reached; each one is announced once per callout. */
+  milestone_x: number;
+}
+
+/** `data` of a `callout.scored` webhook: the first 24 hours were scored (on candles, or live numbers without them). */
+export interface CalloutScoredData {
+  callout: Callout & { first_day: CalloutFirstDay };
+}
+
+/**
+ * `data` of a `callout.final` webhook: tracking stopped because the token was
+ * inactive (market cap below $10k for 24 hours in a row). The score is final.
+ */
+export interface CalloutFinalData {
+  callout: Callout;
+}
+
 /** `data` of every webhook type the SDK knows the shape of. */
 export interface WebhookEventDataMap {
   'thesis.created': ThesisCreatedData;
@@ -704,6 +742,10 @@ export interface WebhookEventDataMap {
   'competition.updated': CompetitionUpdatedData;
   'competition.standings': CompetitionStandingsData;
   'competition.ended': CompetitionEndedData;
+  'callout.created': CalloutCreatedData;
+  'callout.milestone': CalloutMilestoneData;
+  'callout.scored': CalloutScoredData;
+  'callout.final': CalloutFinalData;
 }
 
 /** A webhook event of type K with its typed `data`. */
@@ -1112,10 +1154,21 @@ export interface PlatformLeaderboardResponse {
   leaderboard: PlatformLeaderboardEntry[];
 }
 
-// ── trading competitions ────────────────────────────────────────────────────
+// ── competitions (trading and callouts) ─────────────────────────────────────
 
+/** `trading`: ranked on trades (default). `callouts`: ranked on callouts (needs the callouts extra). */
+export const COMPETITION_KINDS = ['trading', 'callouts'] as const;
+export type CompetitionKind = (typeof COMPETITION_KINDS)[number];
+
+/** Metrics of trading competitions. */
 export const COMPETITION_METRICS = ['pnl_usd', 'pnl', 'volume_usd', 'volume', 'trades', 'win_rate'] as const;
-export type CompetitionMetric = (typeof COMPETITION_METRICS)[number];
+export type TradingCompetitionMetric = (typeof COMPETITION_METRICS)[number];
+
+/** Metrics of callout competitions (each callout scored by its peak multiple, `score_x`). */
+export const CALLOUT_COMPETITION_METRICS = ['avg_peak_x', 'best_peak_x', 'sum_peak_x', 'hit_rate', 'callouts'] as const;
+export type CalloutCompetitionMetric = (typeof CALLOUT_COMPETITION_METRICS)[number];
+
+export type CompetitionMetric = TradingCompetitionMetric | CalloutCompetitionMetric;
 
 /** scheduled -> waiting (start time passed, not enough participants) -> running -> ended / cancelled */
 export const COMPETITION_STATUSES = ['scheduled', 'waiting', 'running', 'ended', 'cancelled'] as const;
@@ -1142,7 +1195,11 @@ export interface Competition {
   id: string;
   name: string;
   description: string | null;
-  chain: Chain;
+  /** `trading` or `callouts`; cannot change after creation. */
+  kind: CompetitionKind;
+  /** `all` (every chain) only in callout competitions. */
+  chain: Chain | 'all';
+  /** e.g. "Solana", or "All chains". */
   chain_name: string;
   metric: CompetitionMetric;
   wallet_trust: WalletTrust;
@@ -1156,8 +1213,14 @@ export interface Competition {
   min_participants: number;
   max_participants: number | null;
   participants: number;
-  min_trades: number;
-  min_volume_usd: number;
+  /** Trading competitions only. */
+  min_trades?: number;
+  /** Trading competitions only. */
+  min_volume_usd?: number;
+  /** Callout competitions only: callouts needed to be ranked (0 and 1 both mean at least one). */
+  min_callouts?: number;
+  /** Callout competitions only: the multiple that counts as a hit for `hit_rate`. */
+  hit_x?: number;
   late_join: boolean;
   /** Whatever you passed (any JSON, max 5000 characters). */
   prizes: unknown;
@@ -1176,7 +1239,7 @@ export interface CompetitionParticipant {
   joined_at: string;
 }
 
-export interface CompetitionStanding {
+export interface CompetitionStandingBase {
   /** null: below the minimums (listed, not ranked). */
   rank: number | null;
   ranked: boolean;
@@ -1184,6 +1247,10 @@ export interface CompetitionStanding {
   csid_id: string;
   /** The value of the competition's metric. */
   score: number;
+}
+
+/** Stats of a participant in a trading competition. */
+export interface TradingCompetitionStats {
   pnl: number;
   pnl_usd: number;
   volume: number;
@@ -1198,6 +1265,22 @@ export interface CompetitionStanding {
   /** Wallets that count on the competition's chain. */
   wallets: number;
 }
+
+/** Stats of a participant in a callout competition: their callouts during the competition. */
+export interface CalloutCompetitionStats extends CalloutSummary {
+  /** The participant's callout with the highest peak multiple; null without callouts. */
+  best_call: CalloutBestCall | null;
+}
+
+export type TradingCompetitionStanding = CompetitionStandingBase & TradingCompetitionStats;
+export type CalloutCompetitionStanding = CompetitionStandingBase & CalloutCompetitionStats;
+
+/**
+ * One row of the standings. Trading competitions fill the trading stats,
+ * callout competitions the callout stats (check `Competition.kind`, or narrow
+ * with `TradingCompetitionStanding` / `CalloutCompetitionStanding`).
+ */
+export type CompetitionStanding = CompetitionStandingBase & Partial<TradingCompetitionStats> & Partial<CalloutCompetitionStats>;
 
 /** Standings: ranked first, then the unranked. Pagination (offset) is in the envelope. */
 export interface CompetitionStandingsResponse {
@@ -1399,3 +1482,211 @@ export interface ThesisRemoved {
 }
 /** Stream / live payload of changed reaction counts. */
 export type ThesisReactionUpdate = ThesisReactions & { blockchain?: Chain; mint?: string };
+
+// ── callouts (an extra, switched on per instance on request) ────────────────
+//
+// A user calls a token; its price and market cap are stamped and tracked: every
+// minute for the first 24 hours (then that day is scored on candles), after that
+// every 5 minutes while the token is active. Tracking stops after 24 hours in a
+// row below a $10k market cap.
+
+/** Callout statuses you can see (removed callouts leave every list). */
+export type CalloutStatus = 'tracking' | 'final';
+
+/** `first_day`: read every minute; `extended`: every 5 minutes; `stopped`: no longer tracked. */
+export type CalloutTrackingPhase = 'first_day' | 'extended' | 'stopped';
+
+/** `inactive`: market cap below $10k for 24 hours in a row; `no_price`: the token lost its market price. */
+export type CalloutStopReason = 'inactive' | 'no_price';
+
+/** Milestones announced once each (`callout.milestone`). */
+export const CALLOUT_MILESTONES = [2, 3, 5, 10, 20, 50, 100] as const;
+
+/** Longest callout note, in characters (at most one link). */
+export const CALLOUT_MAX_NOTE = 280;
+
+/** Below this market cap (USD) for 24 hours in a row, after the first day, tracking stops. */
+export const CALLOUT_ACTIVE_MCAP_USD = 10_000;
+
+/** Sort orders of the callers leaderboard. */
+export const CALLOUT_LEADERBOARD_SORTS = ['avg_peak_x', 'best_peak_x', 'sum_peak_x', 'hit_rate', 'callouts', 'median_peak_x'] as const;
+export type CalloutLeaderboardSort = (typeof CALLOUT_LEADERBOARD_SORTS)[number];
+
+/** Who may make callouts on your platform. */
+export const CALLOUT_WHO = ['all', 'kol_only'] as const;
+export type CalloutWho = (typeof CALLOUT_WHO)[number];
+
+/** A caller (author of callouts), as shown on callouts, stats and the leaderboard. */
+export interface CalloutUser {
+  csid_id: string;
+  /** Your user id, for platform users (white-label); else null. */
+  external_id: string | null;
+  name: string | null;
+  username: string | null;
+  avatar_url: string | null;
+  /** Has the KOL badge. */
+  kol: boolean;
+}
+
+/** The author of a callout; only `csid_id` when the profile could not be loaded. */
+export type CalloutAuthor = Pick<CalloutUser, 'csid_id'> & Partial<Omit<CalloutUser, 'csid_id'>>;
+
+export interface CalloutToken {
+  name: string | null;
+  symbol: string | null;
+  logo: string | null;
+}
+
+/** The first 24 hours, scored once they are over. */
+export interface CalloutFirstDay {
+  /** `candles`: scored on price candles; `live`: no candles, the live numbers stand. */
+  kind: 'candles' | 'live';
+  /** The entry: the candle close right before the call, or the quote at the call. */
+  entry_price_usd: number;
+  /** Highest high of the first day against the entry (candles only). */
+  peak_x: number | null;
+  /** Last close of the first day against the entry (candles only). */
+  close_x: number | null;
+  minutes_to_peak: number | null;
+  /** e.g. STALE_ENTRY, NO_TRADES_AFTER, NO_TRADES_LAST_6H, EXTREME_MULTIPLE, CANDLES_UNAVAILABLE, NO_CANDLES_NO_DATA. */
+  flags: string[];
+}
+
+export interface CalloutTracking {
+  /** true while the callout is tracked. */
+  active: boolean;
+  phase: CalloutTrackingPhase;
+  /** Next daily candle check (after the first day, while tracking). */
+  next_check_at: string | null;
+  /** Since when the market cap is below $10k (after the first day, while tracking); null when it is not. */
+  below_10k_since: string | null;
+  /** Daily candle checks done after the first day. */
+  daily_checks: number;
+  stopped_at: string | null;
+  stop_reason: CalloutStopReason | null;
+}
+
+/** A callout: one user calling one token, with the numbers at the call, now and at the peak. */
+export interface Callout {
+  id: string;
+  chain: Chain;
+  mint: string;
+  token: CalloutToken;
+  author: CalloutAuthor;
+  note: string | null;
+  called_at: string;
+  /** End of the first 24 hours. */
+  window_ends_at: string;
+  status: CalloutStatus;
+  /** Stamped at the call. */
+  at_call: { price_usd: number; market_cap_usd: number | null };
+  /** The latest read; `x` = now against the entry. */
+  now: { price_usd: number | null; market_cap_usd: number | null; x: number | null; at: string | null };
+  /** The highest price since the call; `x` = peak against the entry. */
+  peak: { price_usd: number; market_cap_usd: number | null; x: number | null; at: string | null };
+  /** The callout's score: the peak multiple since the call. */
+  score_x: number | null;
+  /** Market data provider of the numbers. */
+  source: string | null;
+  tracking: CalloutTracking;
+  /** Present once the first 24 hours are scored. */
+  first_day?: CalloutFirstDay;
+}
+
+/** Result of `POST /v1/callouts/remove`. */
+export interface CalloutRemoveResult {
+  id: string;
+  removed: true;
+}
+
+/** Average, median, best and hit rate of a set of callouts (by peak multiple). */
+export interface CalloutSummary {
+  callouts: number;
+  avg_peak_x: number | null;
+  median_peak_x: number | null;
+  best_peak_x: number | null;
+  sum_peak_x: number;
+  /** Callouts that reached `hit_x`. */
+  hits: number;
+  /** Share of hits in percent (0-100). */
+  hit_rate: number;
+}
+
+/** Stats of the callouts made in one period. */
+export interface CalloutPeriodStats extends CalloutSummary {
+  /** Average multiple right now. */
+  avg_now_x: number | null;
+  /** Callouts still tracked. */
+  tracking: number;
+}
+
+/** `GET /v1/callouts/stats`: one user's callouts per period (made in the last 6h / 1d / 7d / 30d). */
+export interface CalloutStats {
+  user: CalloutUser | null;
+  hit_x: number;
+  periods: Record<Period, CalloutPeriodStats>;
+  callouts_all_time: number;
+}
+
+/** A caller's best callout (highest peak multiple). */
+export interface CalloutBestCall {
+  id: string;
+  chain: Chain;
+  mint: string;
+  symbol: string | null;
+  peak_x: number | null;
+}
+
+export interface CalloutLeaderboardEntry extends CalloutSummary {
+  rank: number;
+  csid_id: string;
+  author: CalloutUser | null;
+  best_call: CalloutBestCall;
+}
+
+/** `GET /v1/callouts/leaderboard`. Pagination is in the envelope (`*Raw`). */
+export interface CalloutLeaderboardResponse {
+  period: Period;
+  chain: Chain | null;
+  sort: CalloutLeaderboardSort;
+  hit_x: number;
+  leaderboard: CalloutLeaderboardEntry[];
+}
+
+/** Your instance's callout rules. */
+export interface CalloutSettings {
+  /** Default: all */
+  who: CalloutWho;
+  /** Only holders of the token may call it. Default: true */
+  require_holding: boolean;
+  /** Minutes between two callouts of one user, 0-10080. Default: 360 */
+  cooldown_minutes: number;
+}
+
+/** Settings to change; only what you pass changes. */
+export type CalloutSettingsUpdate = Partial<CalloutSettings>;
+
+// stream payloads
+
+/** Stream: a new read of a tracked callout (no milestone reached). */
+export interface CalloutUpdate {
+  id: string;
+  chain: Chain;
+  mint: string;
+  price_usd: number;
+  market_cap_usd: number | null;
+  /** Now against the entry. */
+  x: number | null;
+  /** The score so far. */
+  peak_x: number;
+}
+
+/** Stream: a callout reached a milestone (the callout plus `milestone_x`). */
+export type CalloutMilestone = Callout & { milestone_x: number };
+
+/** Stream: a callout was taken down by the platform. */
+export interface CalloutRemoved {
+  id: string;
+  chain: Chain;
+  mint: string;
+}

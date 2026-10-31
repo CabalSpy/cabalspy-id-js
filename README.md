@@ -263,9 +263,12 @@ try {
 | `AuthenticationError` | 401 | `missing_api_key` |
 | `PermissionError` | 403 | `invalid_api_key`, `product_not_enabled`, `no_instance`, `scope_not_allowed` |
 | `PlanUserLimitError` | 403 | `plan_user_limit` |
+| `FeatureNotEnabledError` | 403 | `feature_not_enabled` (an extra such as callouts is not switched on) |
 | `NotFoundError` | 404 | `profile_not_found`, `wallet_not_found`, `instance_not_found`, `platform_user_not_found`, … |
-| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, … |
+| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, …; callouts: `already_called` |
+| `UnprocessableError` | 422 | `no_price` (callouts) |
 | `RateLimitError` | 429 | `rate_limit_exceeded`, `rate_limited` |
+| `CalloutCooldownError` | 429 | `callout_cooldown` (a `RateLimitError`; not retried) |
 | `ServerError` | 5xx | `internal_error`, `service_unavailable` |
 | `ConnectionError` | – | network failure, timeout |
 | `OAuthError` | 4xx | OAuth errors from the login endpoints (`invalid_grant`, `invalid_client`, …) |
@@ -273,7 +276,7 @@ try {
 | `WebhookVerificationError` | – | webhook signature or timestamp invalid |
 | `PlatformImportError` | – | `importAllPlatformUsers()` stopped; carries `result` and `pending` |
 
-`429`, `5xx` and network errors are retried with exponential backoff (default 2 retries); `Retry-After` wins. The rate limit of the last call is in `csid.lastRateLimit` (`X-RateLimit-Limit/Remaining/Reset`).
+`429`, `5xx` and network errors are retried with exponential backoff (default 2 retries); `Retry-After` wins. POSTs are only retried after the API's own rate limit (`rate_limit_exceeded`), never after `callout_cooldown`. The rate limit of the last call is in `csid.lastRateLimit` (`X-RateLimit-Limit/Remaining/Reset`).
 
 ## White-label (platform users)
 
@@ -355,7 +358,7 @@ Competitions between your platform users: at most 5 scheduled + running per acco
 | `competitionParticipants({ id, limit?, offset? })` / `iterCompetitionParticipants()` | `GET /v1/competitions/participants` |
 | `competitionStandings({ id, limit?, offset? })` / `iterCompetitionStandings()` | `GET /v1/competitions/standings` |
 
-Metrics: `pnl_usd`, `pnl`, `volume_usd`, `volume`, `trades`, `win_rate`. Status: `scheduled`, `waiting` (start time passed, not enough participants), `running`, `ended`, `cancelled`. `enrollment: 'all_users'` enters every platform user.
+Metrics: `pnl_usd`, `pnl`, `volume_usd`, `volume`, `trades`, `win_rate` (callout competitions: see [Callouts](#callouts-on-request)). Status: `scheduled`, `waiting` (start time passed, not enough participants), `running`, `ended`, `cancelled`. `enrollment: 'all_users'` enters every platform user.
 
 ### Webhooks and errors
 
@@ -370,6 +373,69 @@ if (isWebhookEvent(event, 'competition.ended')) console.log(event.data.cancelled
 ```
 
 White-label error codes use the existing classes, plus `ConflictError` (409): `account_claimed`, `too_many_wallets`, `wallet_already_verified`, `last_wallet`, `kol_badge`, `x_required`, `kol_not_eligible`, `volume_check_unavailable`, `competition_limit`, `competition_closed`, `competition_full`, `late_join_closed`. Also `platform_user_not_found`, `verification_not_found`, `competition_not_found` (404, `NotFoundError`), `wallet_required`, `invalid_address`, `invalid_return_url` (400, `BadRequestError`), `claim_disabled` (403, `PermissionError`), `plan_user_limit` (403, `PlanUserLimitError`: no new user fits in your plan; sandbox and development instances hold 25 platform users) and `rate_limited` (429, `RateLimitError`).
+
+## Callouts (on request)
+
+Callouts are an extra: **CabalSpy switches them on per instance on request** (callout competitions come with them). Without it, every callout call throws `FeatureNotEnabledError` (403 `feature_not_enabled`); `(await csid.me()).features` lists the extras that are on.
+
+A user calls a token: its price and market cap are stamped at that moment and tracked.
+
+- **First 24 hours:** read every minute; then that day is scored on price candles (`callout.scored`, `first_day`).
+- **After that:** read every 5 minutes while the token is active, and each day's 5-minute candles are added to the peak. Tracking stops after 24 hours in a row below a $10k market cap (`tracking.below_10k_since` shows the clock; `callout.final`).
+- **Score:** `score_x` is the peak multiple since the call (highest price against the entry). `at_call`, `now` and `peak` carry price, market cap and multiple.
+
+```ts
+import { CabalSpyID, CalloutCooldownError } from 'cabalspy-id';
+
+const csid = new CabalSpyID({ apiKey: process.env.CABALSPY_API_KEY });
+
+try {
+  const c = await csid.createCallout({ external_id: 'user_1001', chain: 'solana', mint, note: 'Breakout incoming' });
+  console.log(c.at_call.market_cap_usd, c.tracking.phase); // 'first_day'
+} catch (err) {
+  if (err instanceof CalloutCooldownError) console.log(`next callout in ${err.retryAfter} s`); // never auto-retried
+  else throw err;
+}
+
+const markers = await csid.callouts({ chain: 'solana', mint, limit: 50 });          // newest first
+const stats = await csid.calloutStats({ external_id: 'user_1001' });               // per 6h / 1d / 7d / 30d
+const board = await csid.calloutLeaderboard({ period: '7d', sort: 'avg_peak_x' });  // your callers ranked
+
+const live = csid.calloutsStream({ chain: 'solana' });
+live.on('callout.milestone', (c) => console.log(c.token.symbol, `${c.milestone_x}x`));
+await live.connect();
+```
+
+| Method | Endpoint |
+|---|---|
+| `createCallout({ external_id \| csid_id, chain, mint, note? })` | `POST /v1/callouts` (201) |
+| `removeCallout(id \| { id, reason? })` | `POST /v1/callouts/remove` (moderation; leaves every list and statistic) |
+| `callouts({ chain?, mint?, external_id? \| csid_id?, since?, until?, limit?, cursor? })` / `calloutsRaw()` / `iterCallouts()` | `GET /v1/callouts` (newest first; `mint` needs `chain`) |
+| `callout(id)` | `GET /v1/callouts/item` |
+| `calloutStats(externalId \| { external_id \| csid_id, hit_x? })` | `GET /v1/callouts/stats` |
+| `calloutLeaderboard({ period?, chain?, sort?, min_callouts?, hit_x?, limit?, cursor? })` / `calloutLeaderboardRaw()` / `iterCalloutLeaderboard()` | `GET /v1/callouts/leaderboard` |
+| `calloutSettings()` / `updateCalloutSettings({ who?, require_holding?, cooldown_minutes? })` | `GET` / `POST /v1/callouts/settings` |
+| `calloutsStream({ chain?, mint? })` | `WSS /v1/callouts/stream` |
+
+**Stats and leaderboard.** Per period (`6h`, `1d`, `7d`, `30d`: callouts made in that period): `callouts`, `avg_peak_x`, `median_peak_x`, `best_peak_x`, `sum_peak_x`, `hits` and `hit_rate` (percent reaching `hit_x`, default 2); stats add `avg_now_x` and `tracking`. Leaderboard sorts: `avg_peak_x` (default), `best_peak_x`, `sum_peak_x`, `hit_rate`, `callouts`, `median_peak_x`; each entry carries the caller (`author`) and their `best_call`.
+
+**Settings.** `who`: `all` (default) or `kol_only`; `require_holding` (default `true`: only holders of the token can call it); `cooldown_minutes` between two callouts of one user (0-10080, default 360).
+
+**Stream.** `calloutsStream()` (at most 5 connections per key) emits `callout.created`, `callout.update` (a new read: `price_usd`, `market_cap_usd`, `x`, `peak_x`), `callout.milestone` (the callout plus `milestone_x`: 2, 3, 5, 10, 20, 50, 100), `callout.scored`, `callout.final` and `callout.removed`; it reconnects like the other streams and works with `for await (const { event, data } of stream)`.
+
+**Webhooks** (instance level, no `sub`): `callout.created`, `callout.milestone` (`data.milestone_x`), `callout.scored` (`data.callout.first_day`) and `callout.final`, each with `data.callout`. They are typed in `WebhookEventDataMap`, so `isWebhookEvent(event, 'callout.milestone')` narrows `event.data`.
+
+**Errors.** `CalloutCooldownError` (429 `callout_cooldown`, a `RateLimitError` with `retryAfter`; never retried automatically), `ConflictError` `already_called` (the user called this token less than 24 hours ago), `PermissionError` `not_a_holder`, `kol_only`, `invalid_account`, `posting_paused`, `NotFoundError` `callout_not_found`, `UnprocessableError` (422 `no_price`: the token has no market price yet), `ServerError` `service_unavailable` (the price could not be read; try again), `FeatureNotEnabledError` (403 `feature_not_enabled`).
+
+**Callout competitions.** `createCompetition({ kind: 'callouts', … })` ranks the callouts each participant makes during the competition by their peak multiple. Metrics: `avg_peak_x`, `best_peak_x`, `sum_peak_x`, `hit_rate`, `callouts`; `chain` may be `'all'`; `min_callouts` replaces `min_trades` / `min_volume_usd` and `hit_x` sets the hit multiple (default 2). The kind cannot change later. Standings rows carry the callout stats and `best_call`.
+
+```ts
+const comp = await csid.createCompetition({
+  kind: 'callouts', name: 'Caller of the week', chain: 'all', metric: 'avg_peak_x', duration_hours: 72, min_callouts: 3,
+});
+```
+
+A runnable tour is in [examples/callouts.mjs](examples/callouts.mjs).
 
 ## Token theses
 
