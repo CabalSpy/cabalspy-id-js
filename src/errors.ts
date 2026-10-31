@@ -75,9 +75,16 @@ export class BadRequestError extends CabalSpyIDError {}
 export class AuthenticationError extends CabalSpyIDError {}
 /**
  * 403 — invalid_api_key, product_not_enabled, no_instance, scope_not_allowed;
- * thesis API: origin_not_allowed; white-label: claim_disabled
+ * thesis API: origin_not_allowed; white-label: claim_disabled; callouts:
+ * kol_only, not_a_holder, invalid_account, posting_paused, consent_required, sandbox_user
  */
 export class PermissionError extends CabalSpyIDError {}
+/**
+ * 403 — feature_not_enabled. An extra (e.g. callouts and callout competitions)
+ * is not switched on for this instance; CabalSpy switches it on on request.
+ * `me().features` lists the extras that are on.
+ */
+export class FeatureNotEnabledError extends PermissionError {}
 /**
  * 403 — plan_user_limit. The person signed in beyond the plan's user limit:
  * the platform receives no data for them until it upgrades. For platform users
@@ -89,14 +96,16 @@ export class PlanUserLimitError extends PermissionError {
 }
 /**
  * 404 — profile_not_found, wallet_not_found, instance_not_found; white-label:
- * platform_user_not_found, verification_not_found, competition_not_found, invalid_inbound_url
+ * platform_user_not_found, verification_not_found, competition_not_found, invalid_inbound_url;
+ * callouts: callout_not_found
  */
 export class NotFoundError extends CabalSpyIDError {}
 /**
  * 409 — the request conflicts with the current state. White-label:
  * account_claimed, too_many_wallets, wallet_already_verified, already_verified,
  * last_wallet, kol_badge, x_required, kol_not_eligible, volume_check_unavailable;
- * competitions: competition_limit, competition_closed, competition_full, late_join_closed.
+ * competitions: competition_limit, competition_closed, competition_full, late_join_closed;
+ * callouts: already_called (the user called this token less than 24 hours ago).
  */
 export class ConflictError extends CabalSpyIDError {}
 /**
@@ -112,6 +121,14 @@ export class RateLimitError extends CabalSpyIDError {
     this.retryAfter = opts.retryAfter ?? null;
   }
 }
+/**
+ * 429 — callout_cooldown: the user made a callout too recently (the instance's
+ * `cooldown_minutes`). `retryAfter` says when the next one is possible. Never
+ * retried automatically: it is the user's limit, not the API's.
+ */
+export class CalloutCooldownError extends RateLimitError {}
+/** 422 — the request is valid but cannot be done; callouts: no_price (the token has no market price yet). */
+export class UnprocessableError extends CabalSpyIDError {}
 /** 5xx — internal_error, service_unavailable */
 export class ServerError extends CabalSpyIDError {}
 /** Network failure, timeout or aborted connection. */
@@ -194,15 +211,24 @@ export function errorFromStatus(
   if (status === 400) return new BadRequestError(msg, opts);
   if (status === 401) return new AuthenticationError(msg, opts);
   if (status === 403) {
-    return body?.code === 'plan_user_limit' ? new PlanUserLimitError(msg, opts) : new PermissionError(msg, opts);
+    if (body?.code === 'plan_user_limit') return new PlanUserLimitError(msg, opts);
+    if (body?.code === 'feature_not_enabled') return new FeatureNotEnabledError(msg, opts);
+    return new PermissionError(msg, opts);
   }
   if (status === 404) return new NotFoundError(msg, opts);
   if (status === 409) return new ConflictError(msg, opts);
-  if (status === 429) return new RateLimitError(msg, { ...opts, retryAfter });
+  if (status === 422) return new UnprocessableError(msg, opts);
+  if (status === 429) {
+    const ra = retryAfter ?? (typeof body?.retry_after === 'number' ? body.retry_after : null);
+    return body?.code === 'callout_cooldown'
+      ? new CalloutCooldownError(msg, { ...opts, retryAfter: ra })
+      : new RateLimitError(msg, { ...opts, retryAfter });
+  }
   if (status >= 500) return new ServerError(msg, opts);
   return new CabalSpyIDError(msg, opts);
 }
 
 export function isRetryable(err: unknown): boolean {
+  if (err instanceof CalloutCooldownError) return false;
   return err instanceof RateLimitError || err instanceof ServerError || err instanceof ConnectionError;
 }

@@ -7,6 +7,8 @@
  * - verifyWebhook:    Standard Webhooks signature verification
  * - White-label:      platform users by your own user id (createPlatformUser, importAllPlatformUsers, …)
  *                     and trading competitions between them (createCompetition, …)
+ * - Callouts:         an extra on request: createCallout, calloutLeaderboard, calloutsStream(),
+ *                     callout competitions (createCompetition({ kind: 'callouts', … }))
  * - cabalspy-id/react: <CabalSpyLogin />, <CabalSpyTheses /> and useCabalSpyID()
  *
  * Focused entry points: cabalspy-id/api, cabalspy-id/thesis, cabalspy-id/widget (browser).
@@ -19,6 +21,7 @@ export {
   DEFAULT_BASE_URL,
   DEFAULT_STREAM_URL,
   DEFAULT_THESES_STREAM_URL,
+  DEFAULT_CALLOUTS_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -57,10 +60,17 @@ export {
   type ImportPlatformUsersProgress,
   type ImportPlatformUsersResult,
   type CreateCompetitionParams,
+  type CreateTradingCompetitionParams,
+  type CreateCalloutCompetitionParams,
   type UpdateCompetitionParams,
   type CompetitionsParams,
   type CompetitionPageParams,
   type CompetitionMemberParams,
+  type CreateCalloutParams,
+  type RemoveCalloutParams,
+  type CalloutsParams,
+  type CalloutStatsParams,
+  type CalloutLeaderboardParams,
 } from './client';
 
 export {
@@ -102,6 +112,16 @@ export {
 } from './thesesStream';
 
 export {
+  CalloutsStream,
+  CALLOUT_EVENT_NAMES,
+  type CalloutsStreamOptions,
+  type CalloutsReadyEvent,
+  type CalloutsStreamEventMap,
+  type CalloutEventName,
+  type CalloutStreamEvent,
+} from './calloutsStream';
+
+export {
   ThesisClient,
   ThesisLive,
   DEFAULT_THESIS_URL,
@@ -137,9 +157,12 @@ export {
   AuthenticationError,
   PermissionError,
   PlanUserLimitError,
+  FeatureNotEnabledError,
   NotFoundError,
   ConflictError,
   RateLimitError,
+  CalloutCooldownError,
+  UnprocessableError,
   ServerError,
   ConnectionError,
   InvalidResponseError,

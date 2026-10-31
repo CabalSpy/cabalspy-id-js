@@ -22,9 +22,23 @@ import {
 } from './errors';
 import { CabalSpyIDStream, type StreamOptions } from './stream';
 import { ThesesStream, type ThesesStreamOptions } from './thesesStream';
+import { CalloutsStream, type CalloutsStreamOptions } from './calloutsStream';
 import {
   type ApiResponse,
+  CALLOUT_COMPETITION_METRICS,
+  CALLOUT_LEADERBOARD_SORTS,
+  CALLOUT_WHO,
+  type Callout,
+  type CalloutCompetitionMetric,
+  type CalloutLeaderboardEntry,
+  type CalloutLeaderboardResponse,
+  type CalloutLeaderboardSort,
+  type CalloutRemoveResult,
+  type CalloutSettings,
+  type CalloutSettingsUpdate,
+  type CalloutStats,
   CHAINS,
+  COMPETITION_KINDS,
   COMPETITION_METRICS,
   COMPETITION_STATUSES,
   type Chain,
@@ -32,7 +46,6 @@ import {
   type CompetitionEnrollment,
   type CompetitionJoinResult,
   type CompetitionLeaveResult,
-  type CompetitionMetric,
   type CompetitionParticipant,
   type CompetitionStanding,
   type CompetitionStandingsResponse,
@@ -93,6 +106,7 @@ import {
   type ThesisStance,
   type ThesisSummary,
   type Trade,
+  type TradingCompetitionMetric,
   type TrackerResponse,
   WALLET_TRUST,
   type WalletLookupResponse,
@@ -104,6 +118,7 @@ import { USER_AGENT, env, sleep, utf8 } from './util';
 export const DEFAULT_BASE_URL = 'https://api-id.cabalspy.xyz/v1';
 export const DEFAULT_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/stream';
 export const DEFAULT_THESES_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/theses/stream';
+export const DEFAULT_CALLOUTS_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/callouts/stream';
 
 export interface CabalSpyIDOptions {
   /**
@@ -122,6 +137,8 @@ export interface CabalSpyIDOptions {
   streamUrl?: string;
   /** Theses stream URL. Default: wss://api-id.cabalspy.xyz/v1/theses/stream */
   thesesStreamUrl?: string;
+  /** Callouts stream URL. Default: wss://api-id.cabalspy.xyz/v1/callouts/stream */
+  calloutsStreamUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30_000 */
   timeout?: number;
   /** Retries on 429, 5xx and network errors. Default: 2 */
@@ -394,11 +411,9 @@ export interface ImportPlatformUsersResult extends PlatformImportResult {
 
 // -- trading competitions ----------------------------------------------------
 
-export interface CreateCompetitionParams {
+interface CompetitionBaseParams {
   /** 1-100 characters. */
   name: string;
-  chain: Chain;
-  metric: CompetitionMetric;
   /** 1-8760 (one year); fractions allowed. */
   duration_hours: number;
   /** ISO 8601 or a Date. Omit or null: starts as soon as `min_participants` joined. */
@@ -407,9 +422,6 @@ export interface CreateCompetitionParams {
   min_participants?: number;
   /** null: no limit. */
   max_participants?: number | null;
-  /** Traders below it are listed but not ranked. */
-  min_trades?: number;
-  min_volume_usd?: number;
   /** `verified_only`: only payment-verified wallets count. */
   wallet_trust?: WalletTrust;
   enrollment?: CompetitionEnrollment;
@@ -421,8 +433,41 @@ export interface CreateCompetitionParams {
   description?: string | null;
 }
 
-/** Any rule, any time (also while running); every change is recorded. */
-export type UpdateCompetitionParams = { id: string; note?: string } & Partial<CreateCompetitionParams>;
+/** A trading competition (the default kind): ranked on the participants' trades. */
+export interface CreateTradingCompetitionParams extends CompetitionBaseParams {
+  kind?: 'trading';
+  chain: Chain;
+  metric: TradingCompetitionMetric;
+  /** Traders below it are listed but not ranked. */
+  min_trades?: number;
+  min_volume_usd?: number;
+}
+
+/**
+ * A callout competition (needs the callouts extra): ranked on the callouts each
+ * participant makes during the competition, each scored by its peak multiple.
+ */
+export interface CreateCalloutCompetitionParams extends CompetitionBaseParams {
+  kind: 'callouts';
+  /** A chain, or `all` for callouts on every chain. */
+  chain: Chain | 'all';
+  metric: CalloutCompetitionMetric;
+  /** Callouts needed to be ranked, 0-100000 (0 and 1 both mean at least one). Default: 0 */
+  min_callouts?: number;
+  /** The multiple that counts as a hit for `hit_rate`: above 1, at most 1000. Default: 2 */
+  hit_x?: number;
+}
+
+export type CreateCompetitionParams = CreateTradingCompetitionParams | CreateCalloutCompetitionParams;
+
+/**
+ * Any rule, any time (also while running); every change is recorded. The kind
+ * cannot change: pass the fields of the competition's own kind.
+ */
+export type UpdateCompetitionParams = { id: string; note?: string } & (
+  | Partial<Omit<CreateTradingCompetitionParams, 'kind'>>
+  | Partial<Omit<CreateCalloutCompetitionParams, 'kind'>>
+);
 
 export interface CompetitionsParams {
   status?: CompetitionStatus;
@@ -439,6 +484,57 @@ export interface CompetitionPageParams {
 }
 
 export type CompetitionMemberParams = { id: string } & PlatformUserRef;
+
+// -- callouts (an extra, switched on per instance on request) ------------------
+
+/** A callout by one of your users: `external_id` (platform user) or `csid_id`. */
+export type CreateCalloutParams = PlatformUserRef & {
+  chain: Chain;
+  /** Token mint / contract address. */
+  mint: string;
+  /** Up to 280 characters, at most one link. */
+  note?: string;
+};
+
+export interface RemoveCalloutParams {
+  id: string;
+  /** Up to 200 characters, kept for your records. */
+  reason?: string;
+}
+
+/** Newest first. Filters combine; `mint` needs `chain`. */
+export type CalloutsParams = {
+  chain?: Chain;
+  mint?: string;
+  /** ISO 8601 or a Date: callouts made at or after it. */
+  since?: string | Date;
+  /** ISO 8601 or a Date: callouts made at or before it. */
+  until?: string | Date;
+  /** 1-200. Default: 50 */
+  limit?: number;
+  cursor?: string;
+} & ({ external_id?: string; csid_id?: never } | { csid_id?: string; external_id?: never });
+
+export type CalloutStatsParams = PlatformUserRef & {
+  /** The multiple that counts as a hit: above 1, at most 1000. Default: 2 */
+  hit_x?: number;
+};
+
+export interface CalloutLeaderboardParams {
+  /** Callouts made in this period. Default: 7d */
+  period?: Period;
+  /** Omit for every chain. */
+  chain?: Chain;
+  /** Default: avg_peak_x */
+  sort?: CalloutLeaderboardSort;
+  /** Callouts needed to be listed, 1-1000. Default: 1 */
+  min_callouts?: number;
+  /** Above 1, at most 1000. Default: 2 */
+  hit_x?: number;
+  /** 1-500. Default: 100 */
+  limit?: number;
+  cursor?: string;
+}
 
 function buildQuery(params: Query): string {
   const sp = new URLSearchParams();
@@ -506,14 +602,41 @@ function isoTime(v: string | Date | null | undefined): string | null | undefined
   return v instanceof Date ? v.toISOString().replace(/\.\d{3}Z$/, 'Z') : v;
 }
 
-function competitionFields(p: Partial<CreateCompetitionParams>): Record<string, unknown> {
-  assertOneOf(p.chain, CHAINS, 'chain');
-  assertOneOf(p.metric, COMPETITION_METRICS, 'metric');
-  assertOneOf(p.wallet_trust, WALLET_TRUST, 'wallet_trust');
-  assertOneOf(p.enrollment, ['opt_in', 'all_users'], 'enrollment');
+function competitionFields(p: Record<string, unknown>, create: boolean): Record<string, unknown> {
+  const kind = p.kind as string | undefined;
+  assertOneOf(kind, COMPETITION_KINDS, 'kind');
+  // On create the kind is known (default: trading); an update keeps the competition's own kind.
+  const callouts = kind === 'callouts';
+  const chains: readonly string[] = create && !callouts ? CHAINS : [...CHAINS, 'all'];
+  const metrics: readonly string[] = !create
+    ? [...COMPETITION_METRICS, ...CALLOUT_COMPETITION_METRICS]
+    : callouts
+      ? CALLOUT_COMPETITION_METRICS
+      : COMPETITION_METRICS;
+  assertOneOf(p.chain as string | undefined, chains, 'chain');
+  assertOneOf(p.metric as string | undefined, metrics, 'metric');
+  assertOneOf(p.wallet_trust as string | undefined, WALLET_TRUST, 'wallet_trust');
+  assertOneOf(p.enrollment as string | undefined, ['opt_in', 'all_users'], 'enrollment');
+  if (create) {
+    const wrong = (callouts ? ['min_trades', 'min_volume_usd'] : ['min_callouts', 'hit_x']).find((k) => p[k] !== undefined);
+    if (wrong) {
+      throw new BadRequestError(
+        callouts ? `${wrong} applies to trading competitions; use min_callouts.` : `${wrong} applies to callout competitions (kind: 'callouts').`,
+        { code: 'invalid_parameter', parameter: wrong },
+      );
+    }
+  }
+  assertHitX(p.hit_x);
   const out: Record<string, unknown> = { ...p };
-  if ('starts_at' in p) out.starts_at = isoTime(p.starts_at);
+  if ('starts_at' in p) out.starts_at = isoTime(p.starts_at as string | Date | null | undefined);
   return out;
+}
+
+function assertHitX(v: unknown): void {
+  if (v === undefined) return;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 1 || v > 1000) {
+    throw new BadRequestError('hit_x must be a number above 1 and at most 1000.', { code: 'invalid_parameter', parameter: 'hit_x' });
+  }
 }
 
 function assertToken(p: { blockchain?: string; mint?: string }): void {
@@ -543,6 +666,7 @@ export class CabalSpyID {
   readonly baseUrl: string;
   readonly streamUrl: string;
   readonly thesesStreamUrl: string;
+  readonly calloutsStreamUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
   readonly instance?: string;
@@ -560,6 +684,7 @@ export class CabalSpyID {
     this.baseUrl = (options.baseUrl ?? (env('CABALSPY_ID_BASE_URL') || DEFAULT_BASE_URL)).replace(/\/+$/, '');
     this.streamUrl = (options.streamUrl ?? (env('CABALSPY_ID_STREAM_URL') || DEFAULT_STREAM_URL)).replace(/\/+$/, '');
     this.thesesStreamUrl = (options.thesesStreamUrl ?? DEFAULT_THESES_STREAM_URL).replace(/\/+$/, '');
+    this.calloutsStreamUrl = (options.calloutsStreamUrl ?? DEFAULT_CALLOUTS_STREAM_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.extraHeaders = options.headers ?? {};
@@ -1351,13 +1476,14 @@ export class CabalSpyID {
     return this.post<PlatformKolApply>('/platform-users/kol/apply', userRef(user));
   }
 
-  // ── trading competitions ──────────────────────────────────────────────────
+  // ── competitions ──────────────────────────────────────────────────────────
   // Between your platform users; at most 5 scheduled + running per account.
+  // `kind: 'callouts'` ranks callouts instead of trades (needs the callouts extra).
 
-  /** POST /v1/competitions */
+  /** POST /v1/competitions — a trading competition, or with `kind: 'callouts'` a callout competition. */
   async createCompetition(params: CreateCompetitionParams): Promise<Competition> {
     for (const k of ['name', 'chain', 'metric', 'duration_hours'] as const) assertRequired(params?.[k], k);
-    return this.post<Competition>('/competitions', competitionFields(params));
+    return this.post<Competition>('/competitions', competitionFields({ ...params }, true));
   }
 
   /** GET /v1/competitions — newest first, with live status. */
@@ -1384,7 +1510,10 @@ export class CabalSpyID {
   /** POST /v1/competitions/update — changes any rule, any time; `note` is recorded with it. */
   async updateCompetition(params: UpdateCompetitionParams): Promise<Competition> {
     assertRequired(params?.id, 'id');
-    return this.post<Competition>('/competitions/update', competitionFields(params));
+    if ('kind' in (params as object)) {
+      throw new BadRequestError('kind cannot be changed; create a new competition.', { code: 'invalid_parameter', parameter: 'kind' });
+    }
+    return this.post<Competition>('/competitions/update', competitionFields({ ...params }, false));
   }
 
   /** POST /v1/competitions/cancel */
@@ -1433,6 +1562,120 @@ export class CabalSpyID {
   /** Iterates over every standings entry (offset pagination). */
   async *iterCompetitionStandings(params: CompetitionPageParams): AsyncGenerator<CompetitionStanding, void, void> {
     yield* this.offsetItems((offset) => this.competitionStandingsRaw({ ...params, offset }), (d) => d.standings, params.offset);
+  }
+
+  // ── callouts (an extra, switched on per instance on request) ──────────────
+  // Without it every call throws FeatureNotEnabledError (403 feature_not_enabled).
+
+  /**
+   * POST /v1/callouts — one of your users calls a token; its price and market
+   * cap are stamped and tracked. Throws CalloutCooldownError (429, with
+   * `retryAfter`; never retried automatically), ConflictError `already_called`,
+   * PermissionError `not_a_holder` / `kol_only`, UnprocessableError `no_price`.
+   */
+  async createCallout(params: CreateCalloutParams): Promise<Callout> {
+    const [ref, rest] = splitRef(params);
+    assertRequired(rest.chain, 'chain');
+    assertOneOf(rest.chain as string, CHAINS, 'chain');
+    assertRequired(rest.mint, 'mint');
+    if (rest.note !== undefined && rest.note !== null && typeof rest.note !== 'string') {
+      throw new BadRequestError('note must be text.', { code: 'invalid_parameter', parameter: 'note' });
+    }
+    return this.post<Callout>('/callouts', {
+      ...ref,
+      chain: rest.chain,
+      mint: rest.mint,
+      ...(rest.note !== undefined ? { note: rest.note } : {}),
+    });
+  }
+
+  /** POST /v1/callouts/remove — takes a callout down (moderation); it leaves every list and statistic. */
+  async removeCallout(params: string | RemoveCalloutParams): Promise<CalloutRemoveResult> {
+    const p = typeof params === 'string' ? { id: params } : params;
+    assertRequired(p?.id, 'id');
+    return this.post<CalloutRemoveResult>('/callouts/remove', { id: p.id, ...(p.reason !== undefined ? { reason: p.reason } : {}) });
+  }
+
+  /** GET /v1/callouts — callouts of your instance, newest first (e.g. markers on a chart). */
+  async callouts(params: CalloutsParams = {}): Promise<Callout[]> {
+    return (await this.calloutsRaw(params)).data;
+  }
+
+  async calloutsRaw(params: CalloutsParams = {}): Promise<Envelope<Callout[]>> {
+    const p = params as CalloutsParams & { external_id?: string; csid_id?: string };
+    assertOneOf(p.chain, CHAINS, 'chain');
+    if (p.mint) assertRequired(p.chain, 'chain');
+    if (p.external_id && p.csid_id) {
+      throw new BadRequestError('Pass at most one of: external_id, csid_id.', { code: 'invalid_parameter', parameter: 'external_id|csid_id' });
+    }
+    return this.getRaw<Callout[]>('/callouts', {
+      chain: p.chain,
+      mint: p.mint,
+      external_id: p.external_id,
+      csid_id: p.csid_id,
+      since: isoTime(p.since),
+      until: isoTime(p.until),
+      limit: p.limit,
+      cursor: p.cursor,
+    });
+  }
+
+  /** Iterates over every matching callout, newest first, following `next_cursor`. */
+  async *iterCallouts(params: CalloutsParams = {}): AsyncGenerator<Callout, void, void> {
+    for await (const page of this.pages((cursor) => this.calloutsRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /** GET /v1/callouts/item — one callout. */
+  async callout(id: string): Promise<Callout> {
+    assertRequired(id, 'id');
+    return this.get<Callout>('/callouts/item', { id });
+  }
+
+  /** GET /v1/callouts/stats — one user's callouts per period (6h, 1d, 7d, 30d) and all time. */
+  async calloutStats(params: PlatformUserId | CalloutStatsParams): Promise<CalloutStats> {
+    const hitX = typeof params === 'string' ? undefined : (params as CalloutStatsParams).hit_x;
+    assertHitX(hitX);
+    return this.get<CalloutStats>('/callouts/stats', { ...userRef(params), hit_x: hitX });
+  }
+
+  /** GET /v1/callouts/leaderboard — your callers ranked (cached for 30 s). */
+  async calloutLeaderboard(params: CalloutLeaderboardParams = {}): Promise<CalloutLeaderboardResponse> {
+    return (await this.calloutLeaderboardRaw(params)).data;
+  }
+
+  async calloutLeaderboardRaw(params: CalloutLeaderboardParams = {}): Promise<Envelope<CalloutLeaderboardResponse>> {
+    assertOneOf(params.period, PERIODS, 'period');
+    assertOneOf(params.chain, CHAINS, 'chain');
+    assertOneOf(params.sort, CALLOUT_LEADERBOARD_SORTS, 'sort');
+    assertHitX(params.hit_x);
+    return this.getRaw<CalloutLeaderboardResponse>('/callouts/leaderboard', { ...params });
+  }
+
+  /** Iterates over every entry of the callers leaderboard, following `next_cursor`. */
+  async *iterCalloutLeaderboard(params: CalloutLeaderboardParams = {}): AsyncGenerator<CalloutLeaderboardEntry, void, void> {
+    for await (const page of this.pages((cursor) => this.calloutLeaderboardRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data.leaderboard;
+    }
+  }
+
+  /** GET /v1/callouts/settings — who may call, holders only, cooldown. */
+  async calloutSettings(): Promise<CalloutSettings> {
+    return this.get<CalloutSettings>('/callouts/settings');
+  }
+
+  /** POST /v1/callouts/settings — changes only what you pass; returns every setting. */
+  async updateCalloutSettings(changes: CalloutSettingsUpdate): Promise<CalloutSettings> {
+    assertOneOf(changes?.who, CALLOUT_WHO, 'who');
+    const cd = changes?.cooldown_minutes;
+    if (cd !== undefined && (!Number.isInteger(cd) || cd < 0 || cd > 10080)) {
+      throw new BadRequestError('cooldown_minutes must be a whole number from 0 to 10080 (7 days).', {
+        code: 'invalid_parameter',
+        parameter: 'cooldown_minutes',
+      });
+    }
+    return this.post<CalloutSettings>('/callouts/settings', { ...changes });
   }
 
   /**
@@ -1484,6 +1727,21 @@ export class CabalSpyID {
       throw new AuthenticationError('The theses stream needs an API key.', { status: 401, code: 'missing_api_key' });
     }
     return new ThesesStream(this.thesesStreamUrl, this.apiKey, { instance: this.instance, ...options });
+  }
+
+  /**
+   * Every callout event of your instance, live (needs the callouts extra; at
+   * most 5 connections per key). Optional `chain` / `mint` narrow it.
+   *
+   *   const cs = csid.calloutsStream({ chain: 'solana' });
+   *   cs.on('callout.created', (c) => addMarker(c));
+   *   await cs.connect();
+   */
+  calloutsStream(options: CalloutsStreamOptions = {}): CalloutsStream {
+    if (!this.apiKey) {
+      throw new AuthenticationError('The callouts stream needs an API key.', { status: 401, code: 'missing_api_key' });
+    }
+    return new CalloutsStream(this.calloutsStreamUrl, this.apiKey, { instance: this.instance, ...options });
   }
 }
 

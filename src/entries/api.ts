@@ -1,7 +1,8 @@
 /**
  * `cabalspy-id/api` — the SocialFi API: Data API client (users, profiles,
  * verified wallets, trading stats, leaderboards), white-label platform users and
- * trading competitions, the live trade stream, Login with CabalSpy ID (OpenID
+ * trading and callout competitions, callouts (an extra on request), the live
+ * trade and callouts streams, Login with CabalSpy ID (OpenID
  * Connect) and webhook verification.
  *
  *   import { CabalSpyID, CabalSpyIDAuth, verifyWebhook } from 'cabalspy-id/api';
@@ -14,6 +15,7 @@ export {
   CabalSpyID,
   DEFAULT_BASE_URL,
   DEFAULT_STREAM_URL,
+  DEFAULT_CALLOUTS_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -40,10 +42,17 @@ export {
   type ImportPlatformUsersProgress,
   type ImportPlatformUsersResult,
   type CreateCompetitionParams,
+  type CreateTradingCompetitionParams,
+  type CreateCalloutCompetitionParams,
   type UpdateCompetitionParams,
   type CompetitionsParams,
   type CompetitionPageParams,
   type CompetitionMemberParams,
+  type CreateCalloutParams,
+  type RemoveCalloutParams,
+  type CalloutsParams,
+  type CalloutStatsParams,
+  type CalloutLeaderboardParams,
 } from '../client';
 
 export {
@@ -57,6 +66,16 @@ export {
   type ReconnectEvent,
   type StreamTopic,
 } from '../stream';
+
+export {
+  CalloutsStream,
+  CALLOUT_EVENT_NAMES,
+  type CalloutsStreamOptions,
+  type CalloutsReadyEvent,
+  type CalloutsStreamEventMap,
+  type CalloutEventName,
+  type CalloutStreamEvent,
+} from '../calloutsStream';
 
 export {
   CabalSpyIDAuth,
@@ -103,6 +122,7 @@ export {
   type ApiResponse,
   type HealthResponse,
   type MeResponse,
+  type InstanceFeature,
   type VerifiedWallet,
   type Profile,
   type WalletLookupResponse,
@@ -148,12 +168,18 @@ export {
   type CompetitionUpdatedData,
   type CompetitionStandingsData,
   type CompetitionEndedData,
+  type CalloutCreatedData,
+  type CalloutMilestoneData,
+  type CalloutScoredData,
+  type CalloutFinalData,
   PLATFORM_IMPORT_MAX,
   PLATFORM_MAX_WALLETS_PER_REQUEST,
   WALLET_TRUST,
   DATA_SCOPES,
   INBOUND_FORMATS,
+  COMPETITION_KINDS,
   COMPETITION_METRICS,
+  CALLOUT_COMPETITION_METRICS,
   COMPETITION_STATUSES,
   MAX_OPEN_COMPETITIONS,
   type WalletTrust,
@@ -197,7 +223,10 @@ export {
   type PlatformUserProfile,
   type PlatformLeaderboardEntry,
   type PlatformLeaderboardResponse,
+  type CompetitionKind,
   type CompetitionMetric,
+  type TradingCompetitionMetric,
+  type CalloutCompetitionMetric,
   type CompetitionStatus,
   type CompetitionEnrollment,
   type CompetitionFieldChanges,
@@ -205,7 +234,40 @@ export {
   type Competition,
   type CompetitionParticipant,
   type CompetitionStanding,
+  type CompetitionStandingBase,
+  type TradingCompetitionStats,
+  type CalloutCompetitionStats,
+  type TradingCompetitionStanding,
+  type CalloutCompetitionStanding,
   type CompetitionStandingsResponse,
   type CompetitionJoinResult,
   type CompetitionLeaveResult,
+  CALLOUT_MILESTONES,
+  CALLOUT_MAX_NOTE,
+  CALLOUT_ACTIVE_MCAP_USD,
+  CALLOUT_LEADERBOARD_SORTS,
+  CALLOUT_WHO,
+  type CalloutStatus,
+  type CalloutTrackingPhase,
+  type CalloutStopReason,
+  type CalloutLeaderboardSort,
+  type CalloutWho,
+  type CalloutUser,
+  type CalloutAuthor,
+  type CalloutToken,
+  type CalloutFirstDay,
+  type CalloutTracking,
+  type Callout,
+  type CalloutRemoveResult,
+  type CalloutSummary,
+  type CalloutPeriodStats,
+  type CalloutStats,
+  type CalloutBestCall,
+  type CalloutLeaderboardEntry,
+  type CalloutLeaderboardResponse,
+  type CalloutSettings,
+  type CalloutSettingsUpdate,
+  type CalloutUpdate,
+  type CalloutMilestone,
+  type CalloutRemoved,
 } from '../types';
