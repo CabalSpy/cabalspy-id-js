@@ -1,7 +1,8 @@
 /**
  * `cabalspy-id/api` — the SocialFi API: Data API client (users, profiles,
- * verified wallets, trading stats, leaderboards), the live trade stream, Login
- * with CabalSpy ID (OpenID Connect) and webhook verification.
+ * verified wallets, trading stats, leaderboards), white-label platform users and
+ * trading competitions, the live trade stream, Login with CabalSpy ID (OpenID
+ * Connect) and webhook verification.
  *
  *   import { CabalSpyID, CabalSpyIDAuth, verifyWebhook } from 'cabalspy-id/api';
  *
@@ -24,6 +25,25 @@ export {
   type HistoryParams,
   type LeaderboardParams,
   type LatestTransactionsParams,
+  type PlatformUserRef,
+  type PlatformUserId,
+  type UpdatePlatformUserParams,
+  type PlatformUsersParams,
+  type AddPlatformWalletsParams,
+  type DeletePlatformWalletParams,
+  type StartWalletVerificationParams,
+  type PlatformUserProfileParams,
+  type PlatformLeaderboardParams,
+  type PlatformClaimLinkParams,
+  type PlatformXConnectParams,
+  type ImportPlatformUsersOptions,
+  type ImportPlatformUsersProgress,
+  type ImportPlatformUsersResult,
+  type CreateCompetitionParams,
+  type UpdateCompetitionParams,
+  type CompetitionsParams,
+  type CompetitionPageParams,
+  type CompetitionMemberParams,
 } from '../client';
 
 export {
@@ -55,7 +75,14 @@ export {
 
 export { decodeJwt, JwksCache, type EcJwk, type Jwks, type JwtHeader, type DecodedJwt } from '../jwt';
 
-export { verifyWebhook, signWebhook, type VerifyWebhookOptions, type HeaderSource } from '../webhooks';
+export {
+  verifyWebhook,
+  verifyTypedWebhook,
+  isWebhookEvent,
+  signWebhook,
+  type VerifyWebhookOptions,
+  type HeaderSource,
+} from '../webhooks';
 
 export * from './errors';
 
@@ -109,4 +136,76 @@ export {
   type DiscoveryDocument,
   type WebhookEventType,
   type WebhookEvent,
+  type WebhookEventDataMap,
+  type TypedWebhookEvent,
+  type PlatformUserCreatedData,
+  type PlatformUserWebhookRef,
+  type PlatformUserClaimedData,
+  type PlatformUserXConnectedData,
+  type WalletAddedData,
+  type VerificationExpiredData,
+  type CompetitionStartedData,
+  type CompetitionUpdatedData,
+  type CompetitionStandingsData,
+  type CompetitionEndedData,
+  PLATFORM_IMPORT_MAX,
+  PLATFORM_MAX_WALLETS_PER_REQUEST,
+  WALLET_TRUST,
+  DATA_SCOPES,
+  INBOUND_FORMATS,
+  COMPETITION_METRICS,
+  COMPETITION_STATUSES,
+  MAX_OPEN_COMPETITIONS,
+  type WalletTrust,
+  type DataScope,
+  type InboundFormat,
+  type WalletFamily,
+  type PlatformWalletInput,
+  type PlatformUserInput,
+  type PlatformWalletStatus,
+  type PlatformWallet,
+  type PlatformWalletAdded,
+  type WalletVerificationStatus,
+  type WalletVerification,
+  type PlatformUser,
+  type PlatformUserUpsertResult,
+  type PlatformImportStatus,
+  type PlatformImportItemResult,
+  type PlatformImportSummary,
+  type PlatformImportResult,
+  type PlatformWalletsAddResult,
+  type PlatformUserDeleteResult,
+  type PlatformWalletDeleteResult,
+  type PlatformSettings,
+  type PlatformSettingsUpdate,
+  type InboundStatus,
+  type InboundEnabled,
+  type InboundEvent,
+  type InboundEventResult,
+  type PlatformUserSession,
+  type PlatformClaimLink,
+  type PlatformXConnect,
+  type PlatformXDisconnect,
+  type PlatformTelegramLink,
+  type PlatformTelegramStatus,
+  type PlatformTelegramUnlink,
+  type PlatformKolStatus,
+  type PlatformKolVolumeCheck,
+  type PlatformKolApply,
+  type PlatformProfileWalletStats,
+  type PlatformProfileTrading,
+  type PlatformUserProfile,
+  type PlatformLeaderboardEntry,
+  type PlatformLeaderboardResponse,
+  type CompetitionMetric,
+  type CompetitionStatus,
+  type CompetitionEnrollment,
+  type CompetitionFieldChanges,
+  type CompetitionChange,
+  type Competition,
+  type CompetitionParticipant,
+  type CompetitionStanding,
+  type CompetitionStandingsResponse,
+  type CompetitionJoinResult,
+  type CompetitionLeaveResult,
 } from '../types';

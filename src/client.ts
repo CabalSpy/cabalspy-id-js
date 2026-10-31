@@ -14,6 +14,7 @@ import {
   ConnectionError,
   EMPTY_RATE_LIMIT,
   InvalidResponseError,
+  PlatformImportError,
   type RateLimitInfo,
   RateLimitError,
   errorFromStatus,
@@ -24,11 +25,25 @@ import { ThesesStream, type ThesesStreamOptions } from './thesesStream';
 import {
   type ApiResponse,
   CHAINS,
+  COMPETITION_METRICS,
+  COMPETITION_STATUSES,
   type Chain,
+  type Competition,
+  type CompetitionEnrollment,
+  type CompetitionJoinResult,
+  type CompetitionLeaveResult,
+  type CompetitionMetric,
+  type CompetitionParticipant,
+  type CompetitionStanding,
+  type CompetitionStandingsResponse,
+  type CompetitionStatus,
+  DATA_SCOPES,
   type HealthResponse,
   type HistoryResponse,
   type HistoryTrade,
   type HoldingsResponse,
+  type InboundEnabled,
+  type InboundStatus,
   LEADERBOARD_SORTS,
   type LeaderboardEntry,
   type LeaderboardResponse,
@@ -36,7 +51,33 @@ import {
   type MeResponse,
   type Pagination,
   PERIODS,
+  PLATFORM_IMPORT_MAX,
   type Period,
+  type PlatformClaimLink,
+  type PlatformImportItemResult,
+  type PlatformImportResult,
+  type PlatformImportSummary,
+  type PlatformKolApply,
+  type PlatformKolStatus,
+  type PlatformKolVolumeCheck,
+  type PlatformLeaderboardEntry,
+  type PlatformLeaderboardResponse,
+  type PlatformSettings,
+  type PlatformSettingsUpdate,
+  type PlatformTelegramLink,
+  type PlatformTelegramStatus,
+  type PlatformTelegramUnlink,
+  type PlatformUser,
+  type PlatformUserDeleteResult,
+  type PlatformUserInput,
+  type PlatformUserProfile,
+  type PlatformUserSession,
+  type PlatformUserUpsertResult,
+  type PlatformWalletDeleteResult,
+  type PlatformWalletInput,
+  type PlatformWalletsAddResult,
+  type PlatformXConnect,
+  type PlatformXDisconnect,
   type PnlCalendarResponse,
   type Profile,
   type Scope,
@@ -53,9 +94,12 @@ import {
   type ThesisSummary,
   type Trade,
   type TrackerResponse,
+  WALLET_TRUST,
   type WalletLookupResponse,
+  type WalletTrust,
+  type WalletVerification,
 } from './types';
-import { USER_AGENT, env, sleep } from './util';
+import { USER_AGENT, env, sleep, utf8 } from './util';
 
 export const DEFAULT_BASE_URL = 'https://api-id.cabalspy.xyz/v1';
 export const DEFAULT_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/stream';
@@ -245,6 +289,157 @@ export interface DeleteThesisParams extends ThesisWriter {
   thesis_id: string;
 }
 
+// -- white-label: platform users ----------------------------------------------
+
+/** One of your platform users: by your own user id (`external_id`) or by their `csid_id`. */
+export type PlatformUserRef = { external_id: string; csid_id?: never } | { csid_id: string; external_id?: never };
+
+/** A platform user by `external_id` (a plain string) or a PlatformUserRef. */
+export type PlatformUserId = string | PlatformUserRef;
+
+/** Only what you pass changes; null clears a field. */
+export type UpdatePlatformUserParams = PlatformUserRef & {
+  /** 1-60 characters, or null. */
+  display_name?: string | null;
+  /** https URL (max 500 characters), or null. */
+  avatar_url?: string | null;
+};
+
+export interface PlatformUsersParams {
+  /** 1-100. Default: 50 */
+  limit?: number;
+  cursor?: string;
+}
+
+export type AddPlatformWalletsParams = PlatformUserRef & {
+  /** At most 10 per request; a user has at most 5 Solana and 5 EVM wallets. */
+  wallets: PlatformWalletInput[];
+};
+
+export type DeletePlatformWalletParams = PlatformUserRef & { address: string };
+
+export type StartWalletVerificationParams = PlatformUserRef & {
+  /** The chain to verify on (the payment is sent there). */
+  chain: Chain;
+  address: string;
+};
+
+export type PlatformUserProfileParams = PlatformUserRef & {
+  /** Default: 7d */
+  period?: Period;
+};
+
+export interface PlatformLeaderboardParams {
+  blockchain: Chain;
+  /** Default: 7d */
+  period?: Period;
+  /** Default: pnl_usd */
+  sort?: LeaderboardSort;
+  /** 1-500. Default: 100 */
+  limit?: number;
+  /** The `next_cursor` of the previous page (a wallet address). */
+  cursor?: string;
+  /** `verified`: only payment-verified wallets. Can only narrow the instance's `leaderboard_trust`. */
+  trust?: 'all' | 'verified';
+}
+
+export type PlatformClaimLinkParams = PlatformUserRef & {
+  /** Where the person returns after claiming; on your verified domains or registered origins (or localhost). */
+  return_url?: string;
+};
+
+export type PlatformXConnectParams = PlatformUserRef & {
+  /** Required. On your verified domains or registered origins (or localhost). */
+  return_url: string;
+};
+
+export interface ImportPlatformUsersProgress {
+  /** 1-based number of the chunk that just finished. */
+  chunk: number;
+  chunks: number;
+  /** Users handled so far. */
+  done: number;
+  total: number;
+  /** Summary over everything handled so far. */
+  summary: PlatformImportSummary;
+}
+
+export interface ImportPlatformUsersOptions {
+  /** Users per request, 1-1000. Default: 1000 */
+  chunkSize?: number;
+  /** Largest JSON body per request in bytes. Default: 900_000 (the server accepts 1 MB). */
+  maxBodyBytes?: number;
+  /**
+   * How often one chunk is sent again after HTTP 429, and how often items the
+   * server rejected with `rate_limited` are sent again. Default: 5
+   */
+  maxRetries?: number;
+  /**
+   * Wait before sending items again that were rejected with `rate_limited`
+   * (the server counts new users per minute and sends no Retry-After for them).
+   * Default: 60_000
+   */
+  rateLimitedItemDelayMs?: number;
+  /** Called after every chunk. */
+  onProgress?: (progress: ImportPlatformUsersProgress) => void;
+}
+
+/** Aggregated result of importAllPlatformUsers(); `results` are in input order. */
+export interface ImportPlatformUsersResult extends PlatformImportResult {
+  /** Number of chunks the users were split into. */
+  chunks: number;
+  /** HTTP requests made, retries included. */
+  requests: number;
+}
+
+// -- trading competitions ----------------------------------------------------
+
+export interface CreateCompetitionParams {
+  /** 1-100 characters. */
+  name: string;
+  chain: Chain;
+  metric: CompetitionMetric;
+  /** 1-8760 (one year); fractions allowed. */
+  duration_hours: number;
+  /** ISO 8601 or a Date. Omit or null: starts as soon as `min_participants` joined. */
+  starts_at?: string | Date | null;
+  /** Default: 1 */
+  min_participants?: number;
+  /** null: no limit. */
+  max_participants?: number | null;
+  /** Traders below it are listed but not ranked. */
+  min_trades?: number;
+  min_volume_usd?: number;
+  /** `verified_only`: only payment-verified wallets count. */
+  wallet_trust?: WalletTrust;
+  enrollment?: CompetitionEnrollment;
+  /** May users join after the start? */
+  late_join?: boolean;
+  /** Any JSON, at most 5000 characters serialized. */
+  prizes?: unknown;
+  /** At most 2000 characters. */
+  description?: string | null;
+}
+
+/** Any rule, any time (also while running); every change is recorded. */
+export type UpdateCompetitionParams = { id: string; note?: string } & Partial<CreateCompetitionParams>;
+
+export interface CompetitionsParams {
+  status?: CompetitionStatus;
+  /** 1-500. Default: 50 */
+  limit?: number;
+  offset?: number;
+}
+
+export interface CompetitionPageParams {
+  id: string;
+  /** 1-1000. Default: 100 */
+  limit?: number;
+  offset?: number;
+}
+
+export type CompetitionMemberParams = { id: string } & PlatformUserRef;
+
 function buildQuery(params: Query): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -286,6 +481,39 @@ function assertRequired(value: unknown, parameter: string): void {
   if (value === undefined || value === null || value === '') {
     throw new BadRequestError(`Parameter '${parameter}' is required`, { code: 'missing_parameter', parameter });
   }
+}
+
+/** `{ external_id }` or `{ csid_id }` of a platform user; exactly one. */
+function userRef(ref: PlatformUserId | undefined): { external_id: string } | { csid_id: string } {
+  const r = (typeof ref === 'string' ? { external_id: ref } : (ref ?? {})) as { external_id?: string; csid_id?: string };
+  const given = [r.external_id, r.csid_id].filter((v) => v !== undefined && v !== null && v !== '').length;
+  if (given !== 1) {
+    throw new BadRequestError('Pass exactly one of: external_id, csid_id.', {
+      code: 'missing_parameter',
+      parameter: 'external_id|csid_id',
+    });
+  }
+  return r.external_id ? { external_id: r.external_id } : { csid_id: r.csid_id! };
+}
+
+/** Splits a params object into the user reference and the rest. */
+function splitRef(params: PlatformUserRef): [{ external_id: string } | { csid_id: string }, Record<string, unknown>] {
+  const { external_id: _e, csid_id: _c, ...rest } = (params ?? {}) as { external_id?: string; csid_id?: string };
+  return [userRef(params), rest];
+}
+
+function isoTime(v: string | Date | null | undefined): string | null | undefined {
+  return v instanceof Date ? v.toISOString().replace(/\.\d{3}Z$/, 'Z') : v;
+}
+
+function competitionFields(p: Partial<CreateCompetitionParams>): Record<string, unknown> {
+  assertOneOf(p.chain, CHAINS, 'chain');
+  assertOneOf(p.metric, COMPETITION_METRICS, 'metric');
+  assertOneOf(p.wallet_trust, WALLET_TRUST, 'wallet_trust');
+  assertOneOf(p.enrollment, ['opt_in', 'all_users'], 'enrollment');
+  const out: Record<string, unknown> = { ...p };
+  if ('starts_at' in p) out.starts_at = isoTime(p.starts_at);
+  return out;
 }
 
 function assertToken(p: { blockchain?: string; mint?: string }): void {
@@ -381,12 +609,38 @@ export class CabalSpyID {
     return (await this.postRaw<T>(path, body)).data;
   }
 
-  private async request<T>(method: 'GET' | 'POST', path: string, auth: boolean, body?: unknown): Promise<Envelope<T>> {
+  private async request<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    auth: boolean,
+    body?: unknown,
+    opts: { maxRetries?: number } = {},
+  ): Promise<Envelope<T>> {
+    const { res, parsed, rateLimit, label } = await this.send(method, path, auth, body, opts);
+    if (parsed == null || typeof parsed !== 'object' || !('data' in parsed)) {
+      throw new InvalidResponseError(`Unexpected response shape on ${label}: no data field`, {
+        status: res.status,
+        code: 'invalid_response',
+        rateLimit,
+      });
+    }
+    return { ...(parsed as ApiResponse<T>), rateLimit, status: res.status };
+  }
+
+  /** One request with retries; throws the mapped error for non-2xx responses. */
+  private async send(
+    method: 'GET' | 'POST',
+    path: string,
+    auth: boolean,
+    body?: unknown,
+    opts: { maxRetries?: number } = {},
+  ): Promise<{ res: Response; text: string; parsed: unknown; rateLimit: RateLimitInfo; label: string }> {
     const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     const label = `${method} ${stripQuery(path)}`;
+    const maxRetries = opts.maxRetries ?? this.maxRetries;
     let lastError: CabalSpyIDError | undefined;
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) await sleep(backoffDelay(attempt, lastError));
 
       const controller = new AbortController();
@@ -441,21 +695,13 @@ export class CabalSpyID {
         const error = errorFromStatus(res.status, errBody, rateLimit, retryAfter, `HTTP ${res.status} on ${label}`);
         const retryable =
           method === 'GET' ? isRetryable(error) : error instanceof RateLimitError && error.code === 'rate_limit_exceeded';
-        if (retryable && attempt < this.maxRetries) {
+        if (retryable && attempt < maxRetries) {
           lastError = error;
           continue;
         }
         throw error;
       }
-
-      if (parsed == null || typeof parsed !== 'object' || !('data' in parsed)) {
-        throw new InvalidResponseError(`Unexpected response shape on ${label}: no data field`, {
-          status: res.status,
-          code: 'invalid_response',
-          rateLimit,
-        });
-      }
-      return { ...(parsed as ApiResponse<T>), rateLimit, status: res.status };
+      return { res, text, parsed, rateLimit, label };
     }
     throw lastError ?? new ConnectionError(`Request failed: ${label}`);
   }
@@ -768,6 +1014,445 @@ export class CabalSpyID {
     assertRequired(params.thesis_id, 'thesis_id');
     assertRequired(params.csid_id, 'csid_id');
     return this.post<{ deleted: true }>('/theses/delete', { ...params });
+  }
+
+  // ── white-label: platform users ───────────────────────────────────────────
+  // A platform that keeps its own login manages its users by its own user id
+  // (`external_id`). Everywhere else in the API, `external_id` works in place
+  // of `csid_id`.
+
+  /**
+   * POST /v1/platform-users — creates the user (needs at least one wallet and
+   * a free place in your plan) or updates an existing one (profile fields that
+   * were passed, wallets added). `created` says which.
+   */
+  async createPlatformUser(params: PlatformUserInput): Promise<PlatformUserUpsertResult> {
+    assertRequired(params?.external_id, 'external_id');
+    return this.post<PlatformUserUpsertResult>('/platform-users', { ...params });
+  }
+
+  /**
+   * POST /v1/platform-users/import — creates or updates up to 1000 users in one
+   * call. Each user is handled on its own: a bad item or the plan limit never
+   * undoes the others. For more users, use importAllPlatformUsers().
+   */
+  async importPlatformUsers(users: PlatformUserInput[]): Promise<PlatformImportResult> {
+    if (!Array.isArray(users) || users.length === 0) {
+      throw new BadRequestError("Parameter 'users' is required", { code: 'missing_parameter', parameter: 'users' });
+    }
+    if (users.length > PLATFORM_IMPORT_MAX) {
+      throw new BadRequestError(`At most ${PLATFORM_IMPORT_MAX} users per import call; use importAllPlatformUsers().`, {
+        code: 'invalid_parameter',
+        parameter: 'users',
+      });
+    }
+    return this.post<PlatformImportResult>('/platform-users/import', { users });
+  }
+
+  /**
+   * Imports any number of users: sends them in chunks of at most 1000 (and
+   * under 1 MB), retries a chunk after HTTP 429 (honouring Retry-After), sends
+   * items rejected with `rate_limited` again after a pause, and returns one
+   * aggregated result in input order. A chunk that succeeded is never sent
+   * again.
+   *
+   * Any other error stops the import with a PlatformImportError carrying the
+   * results so far and the users not yet imported (`pending`); importing them
+   * again is safe, the import is an upsert.
+   */
+  async importAllPlatformUsers(
+    users: Iterable<PlatformUserInput>,
+    options: ImportPlatformUsersOptions = {},
+  ): Promise<ImportPlatformUsersResult> {
+    const all = [...users];
+    const chunkSize = Math.max(1, Math.min(options.chunkSize ?? PLATFORM_IMPORT_MAX, PLATFORM_IMPORT_MAX));
+    const maxBytes = options.maxBodyBytes ?? 900_000;
+    const maxRetries = options.maxRetries ?? 5;
+    const itemDelay = options.rateLimitedItemDelayMs ?? 60_000;
+    const results: (PlatformImportItemResult | undefined)[] = new Array(all.length);
+    let requests = 0;
+
+    // Chunks of input indices: at most chunkSize users and maxBytes of JSON each.
+    const chunks: number[][] = [];
+    let cur: number[] = [];
+    let bytes = utf8('{"users":[]}').length;
+    all.forEach((u, i) => {
+      const size = utf8(JSON.stringify(u)).length + 1;
+      if (cur.length && (cur.length >= chunkSize || bytes + size > maxBytes)) {
+        chunks.push(cur);
+        cur = [];
+        bytes = utf8('{"users":[]}').length;
+      }
+      cur.push(i);
+      bytes += size;
+    });
+    if (cur.length) chunks.push(cur);
+
+    const done = () => results.filter((r): r is PlatformImportItemResult => r !== undefined);
+    const summarize = (): PlatformImportSummary => {
+      const s: PlatformImportSummary = { created: 0, updated: 0, unchanged: 0, rejected: 0 };
+      for (const r of done()) s[r.status] += 1;
+      return s;
+    };
+
+    // One request, retried here after 429 (the client's own retries are off for it).
+    const send = async (idx: number[], c: number): Promise<PlatformImportItemResult[]> => {
+      for (let attempt = 0; ; attempt++) {
+        requests++;
+        try {
+          const env = await this.request<PlatformImportResult>(
+            'POST',
+            '/platform-users/import' + buildQuery(this.authedQuery({}, true)),
+            true,
+            { users: idx.map((i) => all[i]) },
+            { maxRetries: 0 },
+          );
+          return env.data.results;
+        } catch (err) {
+          if (err instanceof RateLimitError && attempt < maxRetries) {
+            const wait =
+              err.retryAfter != null ? err.retryAfter * 1000 : Math.min(1000 * 2 ** attempt, 30_000) + Math.random() * 250;
+            await sleep(Math.min(wait, 300_000));
+            continue;
+          }
+          const pending = [...idx, ...chunks.slice(c + 1).flat()].map((i) => all[i]!);
+          throw new PlatformImportError(err, { summary: summarize(), results: done() }, pending);
+        }
+      }
+    };
+
+    for (let c = 0; c < chunks.length; c++) {
+      let idx = chunks[c]!;
+      for (let round = 0; ; round++) {
+        const got = await send(idx, c);
+        idx.forEach((i, k) => {
+          if (got[k]) results[i] = got[k];
+        });
+        // Items the server skipped because of its per-minute limit for new users.
+        const again = idx.filter((i) => results[i]?.status === 'rejected' && results[i]?.error?.code === 'rate_limited');
+        if (!again.length || round >= maxRetries) break;
+        await sleep(itemDelay);
+        idx = again;
+      }
+      options.onProgress?.({
+        chunk: c + 1,
+        chunks: chunks.length,
+        done: chunks.slice(0, c + 1).reduce((n, x) => n + x.length, 0),
+        total: all.length,
+        summary: summarize(),
+      });
+    }
+    return { summary: summarize(), results: done(), chunks: chunks.length, requests };
+  }
+
+  /** GET /v1/platform-users — one user by external_id (a plain string) or csid_id. */
+  async platformUser(user: PlatformUserId): Promise<PlatformUser> {
+    return this.get<PlatformUser>('/platform-users', userRef(user));
+  }
+
+  /** POST /v1/platform-users/update — changes display_name and/or avatar_url. */
+  async updatePlatformUser(params: UpdatePlatformUserParams): Promise<PlatformUser> {
+    const [ref, rest] = splitRef(params);
+    if (!('display_name' in rest) && !('avatar_url' in rest)) {
+      throw new BadRequestError('Pass display_name and/or avatar_url.', { code: 'missing_parameter', parameter: 'display_name' });
+    }
+    return this.post<PlatformUser>('/platform-users/update', { ...ref, ...rest });
+  }
+
+  /** GET /v1/platform-users/list — your platform users, newest first. */
+  async platformUsers(params: PlatformUsersParams = {}): Promise<PlatformUser[]> {
+    return (await this.platformUsersRaw(params)).data;
+  }
+
+  async platformUsersRaw(params: PlatformUsersParams = {}): Promise<Envelope<PlatformUser[]>> {
+    return this.getRaw<PlatformUser[]>('/platform-users/list', { limit: params.limit, cursor: params.cursor });
+  }
+
+  /** Iterates over every platform user, following `next_cursor`. */
+  async *iterPlatformUsers(params: PlatformUsersParams = {}): AsyncGenerator<PlatformUser, void, void> {
+    for await (const page of this.pages((cursor) => this.platformUsersRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /**
+   * POST /v1/platform-users/delete — a managed user and their data are deleted;
+   * for a claimed user only the link to your platform goes (`deleted: false`).
+   */
+  async deletePlatformUser(user: PlatformUserId): Promise<PlatformUserDeleteResult> {
+    return this.post<PlatformUserDeleteResult>('/platform-users/delete', userRef(user));
+  }
+
+  /** POST /v1/platform-users/wallets/add — adds existing wallets (no payment verification). */
+  async addPlatformUserWallets(params: AddPlatformWalletsParams): Promise<PlatformWalletsAddResult> {
+    const [ref, rest] = splitRef(params);
+    if (!Array.isArray(rest.wallets) || rest.wallets.length === 0) {
+      throw new BadRequestError("Parameter 'wallets' is required", { code: 'missing_parameter', parameter: 'wallets' });
+    }
+    return this.post<PlatformWalletsAddResult>('/platform-users/wallets/add', { ...ref, wallets: rest.wallets });
+  }
+
+  /** POST /v1/platform-users/wallets/delete — removes a wallet (never the last one: `last_wallet`). */
+  async deletePlatformUserWallet(params: DeletePlatformWalletParams): Promise<PlatformWalletDeleteResult> {
+    const [ref, rest] = splitRef(params);
+    assertRequired(rest.address, 'address');
+    return this.post<PlatformWalletDeleteResult>('/platform-users/wallets/delete', { ...ref, address: rest.address });
+  }
+
+  /**
+   * POST /v1/platform-users/wallets/verify — starts a payment verification
+   * (the website's flow). Show `instructions`, `payment_uri` or the QR code
+   * (walletVerificationQr) to the user; `wallet.verified` arrives as a webhook.
+   */
+  async startWalletVerification(params: StartWalletVerificationParams): Promise<WalletVerification> {
+    const [ref, rest] = splitRef(params);
+    assertRequired(rest.chain, 'chain');
+    assertOneOf(rest.chain as string, CHAINS, 'chain');
+    assertRequired(rest.address, 'address');
+    return this.post<WalletVerification>('/platform-users/wallets/verify', { ...ref, chain: rest.chain, address: rest.address });
+  }
+
+  /** GET /v1/platform-users/wallets/verification — status of a verification. */
+  async walletVerification(verificationId: string): Promise<WalletVerification> {
+    assertRequired(verificationId, 'id');
+    return this.get<WalletVerification>('/platform-users/wallets/verification', { id: verificationId });
+  }
+
+  /** GET /v1/platform-users/wallets/verification/qr — the payment URI as a QR code (SVG markup). */
+  async walletVerificationQr(verificationId: string): Promise<string> {
+    assertRequired(verificationId, 'id');
+    const path = '/platform-users/wallets/verification/qr' + buildQuery(this.authedQuery({ id: verificationId }, true));
+    return (await this.send('GET', path, true)).text;
+  }
+
+  /** POST /v1/platform-users/wallets/verification/cancel */
+  async cancelWalletVerification(verificationId: string): Promise<WalletVerification> {
+    assertRequired(verificationId, 'id');
+    return this.post<WalletVerification>('/platform-users/wallets/verification/cancel', { id: verificationId });
+  }
+
+  /**
+   * GET /v1/platform-users/profile — everything for a profile page in one call:
+   * the user, trading per chain (summed over the wallets that count), recent
+   * trades, theses, Trade Feed counts, KOL status and links to the wallet endpoints.
+   */
+  async platformUserProfile(params: PlatformUserId | PlatformUserProfileParams): Promise<PlatformUserProfile> {
+    const period = typeof params === 'string' ? undefined : (params as PlatformUserProfileParams).period;
+    assertOneOf(period, PERIODS, 'period');
+    return this.get<PlatformUserProfile>('/platform-users/profile', { ...userRef(params), period });
+  }
+
+  /** GET /v1/platform-users/leaderboard — your platform users ranked, with their external_id. */
+  async platformLeaderboard(params: PlatformLeaderboardParams): Promise<PlatformLeaderboardResponse> {
+    return (await this.platformLeaderboardRaw(params)).data;
+  }
+
+  async platformLeaderboardRaw(params: PlatformLeaderboardParams): Promise<Envelope<PlatformLeaderboardResponse>> {
+    assertRequired(params.blockchain, 'blockchain');
+    assertOneOf(params.blockchain, CHAINS, 'blockchain');
+    assertOneOf(params.period, PERIODS, 'period');
+    assertOneOf(params.sort, LEADERBOARD_SORTS, 'sort');
+    assertOneOf(params.trust, ['all', 'verified'], 'trust');
+    return this.getRaw<PlatformLeaderboardResponse>('/platform-users/leaderboard', { ...params });
+  }
+
+  /** Iterates over every entry of your platform leaderboard, following `next_cursor`. */
+  async *iterPlatformLeaderboard(params: PlatformLeaderboardParams): AsyncGenerator<PlatformLeaderboardEntry, void, void> {
+    for await (const page of this.pages((cursor) => this.platformLeaderboardRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data.leaderboard;
+    }
+  }
+
+  /** GET /v1/platform-users/settings */
+  async platformSettings(): Promise<PlatformSettings> {
+    return this.get<PlatformSettings>('/platform-users/settings');
+  }
+
+  /** POST /v1/platform-users/settings — changes only what you pass; returns every setting. */
+  async updatePlatformSettings(changes: PlatformSettingsUpdate): Promise<PlatformSettings> {
+    assertOneOf(changes.wallet_trust, WALLET_TRUST, 'wallet_trust');
+    assertOneOf(changes.leaderboard_trust, WALLET_TRUST, 'leaderboard_trust');
+    assertOneOf(changes.data_scope, DATA_SCOPES, 'data_scope');
+    return this.post<PlatformSettings>('/platform-users/settings', { ...changes });
+  }
+
+  /** GET /v1/platform-users/inbound — whether the inbound URL is on, its last event and the formats it reads. */
+  async inboundStatus(): Promise<InboundStatus> {
+    return this.get<InboundStatus>('/platform-users/inbound');
+  }
+
+  /**
+   * POST /v1/platform-users/inbound/enable — a new secret inbound URL for your
+   * platform or auth provider (Privy, Dynamic, …) to post sign-ups to. Shown
+   * once; calling it again replaces the URL.
+   */
+  async enableInbound(): Promise<InboundEnabled> {
+    return this.post<InboundEnabled>('/platform-users/inbound/enable', {});
+  }
+
+  /** POST /v1/platform-users/inbound/disable */
+  async disableInbound(): Promise<{ enabled: false }> {
+    return this.post<{ enabled: false }>('/platform-users/inbound/disable', {});
+  }
+
+  /** POST /v1/platform-users/session — a 15-minute token for the embeddable verify widget. */
+  async platformUserSession(user: PlatformUserId): Promise<PlatformUserSession> {
+    return this.post<PlatformUserSession>('/platform-users/session', userRef(user));
+  }
+
+  /** POST /v1/platform-users/claim-link — a 24-hour link to take the account into the person's own CabalSpy ID. */
+  async platformUserClaimLink(params: PlatformUserId | PlatformClaimLinkParams): Promise<PlatformClaimLink> {
+    const returnUrl = typeof params === 'string' ? undefined : (params as PlatformClaimLinkParams).return_url;
+    return this.post<PlatformClaimLink>('/platform-users/claim-link', {
+      ...userRef(params),
+      ...(returnUrl ? { return_url: returnUrl } : {}),
+    });
+  }
+
+  /** POST /v1/platform-users/x/connect — a 10-minute link that connects the person's X account. */
+  async connectPlatformUserX(params: PlatformXConnectParams): Promise<PlatformXConnect> {
+    const [ref, rest] = splitRef(params);
+    assertRequired(rest.return_url, 'return_url');
+    return this.post<PlatformXConnect>('/platform-users/x/connect', { ...ref, return_url: rest.return_url });
+  }
+
+  /** POST /v1/platform-users/x/disconnect — not possible with the KOL badge (`kol_badge`, 409). */
+  async disconnectPlatformUserX(user: PlatformUserId): Promise<PlatformXDisconnect> {
+    return this.post<PlatformXDisconnect>('/platform-users/x/disconnect', userRef(user));
+  }
+
+  /** POST /v1/platform-users/telegram/link — a t.me deep link that connects the person's Telegram. */
+  async linkPlatformUserTelegram(user: PlatformUserId): Promise<PlatformTelegramLink> {
+    return this.post<PlatformTelegramLink>('/platform-users/telegram/link', userRef(user));
+  }
+
+  /** GET /v1/platform-users/telegram */
+  async platformUserTelegram(user: PlatformUserId): Promise<PlatformTelegramStatus> {
+    return this.get<PlatformTelegramStatus>('/platform-users/telegram', userRef(user));
+  }
+
+  /** POST /v1/platform-users/telegram/unlink */
+  async unlinkPlatformUserTelegram(user: PlatformUserId): Promise<PlatformTelegramUnlink> {
+    return this.post<PlatformTelegramUnlink>('/platform-users/telegram/unlink', userRef(user));
+  }
+
+  /** GET /v1/platform-users/kol — KOL badge, eligibility, criteria, 7-day volume and application. */
+  async platformUserKol(user: PlatformUserId): Promise<PlatformKolStatus> {
+    return this.get<PlatformKolStatus>('/platform-users/kol', userRef(user));
+  }
+
+  /** POST /v1/platform-users/kol/volume-check — queues an on-chain volume check (HTTP 202). */
+  async requestPlatformUserVolumeCheck(user: PlatformUserId): Promise<PlatformKolVolumeCheck> {
+    return this.post<PlatformKolVolumeCheck>('/platform-users/kol/volume-check', userRef(user));
+  }
+
+  /** POST /v1/platform-users/kol/apply — applies for the KOL badge (needs X: `x_required`). */
+  async applyPlatformUserKol(user: PlatformUserId): Promise<PlatformKolApply> {
+    return this.post<PlatformKolApply>('/platform-users/kol/apply', userRef(user));
+  }
+
+  // ── trading competitions ──────────────────────────────────────────────────
+  // Between your platform users; at most 5 scheduled + running per account.
+
+  /** POST /v1/competitions */
+  async createCompetition(params: CreateCompetitionParams): Promise<Competition> {
+    for (const k of ['name', 'chain', 'metric', 'duration_hours'] as const) assertRequired(params?.[k], k);
+    return this.post<Competition>('/competitions', competitionFields(params));
+  }
+
+  /** GET /v1/competitions — newest first, with live status. */
+  async competitions(params: CompetitionsParams = {}): Promise<Competition[]> {
+    return (await this.competitionsRaw(params)).data;
+  }
+
+  async competitionsRaw(params: CompetitionsParams = {}): Promise<Envelope<Competition[]>> {
+    assertOneOf(params.status, COMPETITION_STATUSES, 'status');
+    return this.getRaw<Competition[]>('/competitions', { ...params });
+  }
+
+  /** Iterates over every competition (offset pagination). */
+  async *iterCompetitions(params: CompetitionsParams = {}): AsyncGenerator<Competition, void, void> {
+    yield* this.offsetItems((offset) => this.competitionsRaw({ ...params, offset }), (d) => d, params.offset);
+  }
+
+  /** GET /v1/competitions/detail — one competition with every rule change. */
+  async competition(id: string): Promise<Competition> {
+    assertRequired(id, 'id');
+    return this.get<Competition>('/competitions/detail', { id });
+  }
+
+  /** POST /v1/competitions/update — changes any rule, any time; `note` is recorded with it. */
+  async updateCompetition(params: UpdateCompetitionParams): Promise<Competition> {
+    assertRequired(params?.id, 'id');
+    return this.post<Competition>('/competitions/update', competitionFields(params));
+  }
+
+  /** POST /v1/competitions/cancel */
+  async cancelCompetition(id: string): Promise<Competition> {
+    assertRequired(id, 'id');
+    return this.post<Competition>('/competitions/cancel', { id });
+  }
+
+  /** POST /v1/competitions/join — `already: true` when the user was a participant. */
+  async joinCompetition(params: CompetitionMemberParams): Promise<CompetitionJoinResult> {
+    assertRequired(params?.id, 'id');
+    return this.post<CompetitionJoinResult>('/competitions/join', { id: params.id, ...userRef(params) });
+  }
+
+  /** POST /v1/competitions/leave */
+  async leaveCompetition(params: CompetitionMemberParams): Promise<CompetitionLeaveResult> {
+    assertRequired(params?.id, 'id');
+    return this.post<CompetitionLeaveResult>('/competitions/leave', { id: params.id, ...userRef(params) });
+  }
+
+  /** GET /v1/competitions/participants */
+  async competitionParticipants(params: CompetitionPageParams): Promise<CompetitionParticipant[]> {
+    return (await this.competitionParticipantsRaw(params)).data;
+  }
+
+  async competitionParticipantsRaw(params: CompetitionPageParams): Promise<Envelope<CompetitionParticipant[]>> {
+    assertRequired(params?.id, 'id');
+    return this.getRaw<CompetitionParticipant[]>('/competitions/participants', { ...params });
+  }
+
+  /** Iterates over every participant (offset pagination). */
+  async *iterCompetitionParticipants(params: CompetitionPageParams): AsyncGenerator<CompetitionParticipant, void, void> {
+    yield* this.offsetItems((offset) => this.competitionParticipantsRaw({ ...params, offset }), (d) => d, params.offset);
+  }
+
+  /** GET /v1/competitions/standings — ranked first, then the unranked (below the minimums). */
+  async competitionStandings(params: CompetitionPageParams): Promise<CompetitionStandingsResponse> {
+    return (await this.competitionStandingsRaw(params)).data;
+  }
+
+  async competitionStandingsRaw(params: CompetitionPageParams): Promise<Envelope<CompetitionStandingsResponse>> {
+    assertRequired(params?.id, 'id');
+    return this.getRaw<CompetitionStandingsResponse>('/competitions/standings', { ...params });
+  }
+
+  /** Iterates over every standings entry (offset pagination). */
+  async *iterCompetitionStandings(params: CompetitionPageParams): AsyncGenerator<CompetitionStanding, void, void> {
+    yield* this.offsetItems((offset) => this.competitionStandingsRaw({ ...params, offset }), (d) => d.standings, params.offset);
+  }
+
+  /**
+   * Offset pagination (competitions): the server reports `total` but no cursor
+   * (`has_more` is always false there), so the next offset is computed here.
+   */
+  private async *offsetItems<P, I>(
+    fetchPage: (offset: number) => Promise<Envelope<P>>,
+    items: (data: P) => I[],
+    start = 0,
+  ): AsyncGenerator<I, void, void> {
+    let offset = start;
+    for (;;) {
+      const page = await fetchPage(offset);
+      const list = items(page.data);
+      yield* list;
+      offset += list.length;
+      const total = page.pagination?.total;
+      if (list.length === 0 || (total != null ? offset >= total : list.length < (page.pagination?.limit ?? Infinity))) return;
+    }
   }
 
   // ── stream ────────────────────────────────────────────────────────────────

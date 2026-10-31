@@ -9,7 +9,7 @@
 //                      During a secret roll: several, separated by spaces.
 
 import { WebhookVerificationError } from './errors';
-import type { WebhookEvent } from './types';
+import type { TypedWebhookEvent, WebhookEvent, WebhookEventDataMap } from './types';
 import { type Bytes, base64ToBytes, bytesToBase64, fromUtf8, getCrypto, timingSafeEqual, utf8 } from './util';
 
 export type HeaderSource =
@@ -124,4 +124,27 @@ export async function verifyWebhook<D = Record<string, unknown>>(options: Verify
   } catch {
     throw new WebhookVerificationError('Webhook body is not valid JSON', { code: 'invalid_payload' });
   }
+}
+
+/**
+ * Narrows a verified webhook to one event type with typed `data`.
+ *
+ *   const event = await verifyWebhook({ payload, headers, secret });
+ *   if (isWebhookEvent(event, 'platform_user.created')) event.data.wallets;
+ *   if (isWebhookEvent(event, 'competition.ended', 'competition.standings')) …
+ */
+export function isWebhookEvent<K extends keyof WebhookEventDataMap>(
+  event: WebhookEvent<unknown> | null | undefined,
+  ...types: K[]
+): event is TypedWebhookEvent<K> {
+  return !!event && typeof event.type === 'string' && (types as string[]).includes(event.type);
+}
+
+/**
+ * Like verifyWebhook(), typed as the union of every event type the SDK knows
+ * (`switch (event.type)` narrows `event.data`). Unknown types still arrive at
+ * runtime, so keep a `default` branch.
+ */
+export async function verifyTypedWebhook(options: VerifyWebhookOptions): Promise<TypedWebhookEvent> {
+  return (await verifyWebhook(options)) as unknown as TypedWebhookEvent;
 }

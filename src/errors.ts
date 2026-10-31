@@ -2,6 +2,8 @@
 //  ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
+import type { PlatformImportResult, PlatformUserInput } from './types';
+
 export interface RateLimitInfo {
   /** Requests per second allowed by the plan. `null` when the header is absent. */
   limit: number | null;
@@ -64,22 +66,44 @@ export class CabalSpyIDError extends Error {
   }
 }
 
-/** 400 — missing_parameter, invalid_parameter, instance_required */
+/**
+ * 400 — missing_parameter, invalid_parameter, instance_required; white-label:
+ * wallet_required, invalid_address, invalid_return_url, invalid_body
+ */
 export class BadRequestError extends CabalSpyIDError {}
 /** 401 — missing_api_key; thesis API: client_id_required, invalid_client */
 export class AuthenticationError extends CabalSpyIDError {}
-/** 403 — invalid_api_key, product_not_enabled, no_instance, scope_not_allowed; thesis API: origin_not_allowed */
+/**
+ * 403 — invalid_api_key, product_not_enabled, no_instance, scope_not_allowed;
+ * thesis API: origin_not_allowed; white-label: claim_disabled
+ */
 export class PermissionError extends CabalSpyIDError {}
 /**
  * 403 — plan_user_limit. The person signed in beyond the plan's user limit:
- * the platform receives no data for them until it upgrades.
+ * the platform receives no data for them until it upgrades. For platform users
+ * (white-label) it means no new user can be created: `body.user_limit`,
+ * `body.users` and `body.plan` say why.
  */
 export class PlanUserLimitError extends PermissionError {
   readonly limited = true as const;
 }
-/** 404 — profile_not_found, wallet_not_found, instance_not_found */
+/**
+ * 404 — profile_not_found, wallet_not_found, instance_not_found; white-label:
+ * platform_user_not_found, verification_not_found, competition_not_found, invalid_inbound_url
+ */
 export class NotFoundError extends CabalSpyIDError {}
-/** 429 — rate_limit_exceeded; thesis API: rate_limited (Retry-After 60) */
+/**
+ * 409 — the request conflicts with the current state. White-label:
+ * account_claimed, too_many_wallets, wallet_already_verified, already_verified,
+ * last_wallet, kol_badge, x_required, kol_not_eligible, volume_check_unavailable;
+ * competitions: competition_limit, competition_closed, competition_full, late_join_closed.
+ */
+export class ConflictError extends CabalSpyIDError {}
+/**
+ * 429 — rate_limit_exceeded (requests per second); thesis API and white-label:
+ * rate_limited (e.g. more than 2,000 new platform users per minute,
+ * too_many_open_verifications)
+ */
 export class RateLimitError extends CabalSpyIDError {
   /** Seconds until the next request is allowed, taken from Retry-After. */
   readonly retryAfter: number | null;
@@ -116,6 +140,37 @@ export class TokenVerificationError extends CabalSpyIDError {}
 /** A webhook failed signature or timestamp verification. */
 export class WebhookVerificationError extends CabalSpyIDError {}
 
+/**
+ * importAllPlatformUsers() stopped on an error it does not retry. `cause` is
+ * the original error (its status and code are copied), `result` holds what was
+ * imported so far and `pending` the users not yet imported, in input order.
+ * Importing `pending` again is safe: the import is an upsert.
+ */
+export class PlatformImportError extends CabalSpyIDError {
+  readonly cause: unknown;
+  readonly result: PlatformImportResult;
+  readonly pending: PlatformUserInput[];
+  constructor(cause: unknown, result: PlatformImportResult, pending: PlatformUserInput[]) {
+    const c = cause instanceof CabalSpyIDError ? cause : undefined;
+    super(
+      `Import stopped after ${result.results.length} user(s), ${pending.length} pending: ${(cause as Error)?.message ?? String(cause)}`,
+      {
+        status: c?.status,
+        code: c?.code ?? 'import_failed',
+        requestId: c?.requestId,
+        docs: c?.docs,
+        parameter: c?.parameter,
+        allowed: c?.allowed,
+        rateLimit: c?.rateLimit,
+        body: c?.body,
+      },
+    );
+    this.cause = cause;
+    this.result = result;
+    this.pending = pending;
+  }
+}
+
 /** Maps an HTTP status and Data API error body onto the right error class. */
 export function errorFromStatus(
   status: number,
@@ -142,6 +197,7 @@ export function errorFromStatus(
     return body?.code === 'plan_user_limit' ? new PlanUserLimitError(msg, opts) : new PermissionError(msg, opts);
   }
   if (status === 404) return new NotFoundError(msg, opts);
+  if (status === 409) return new ConflictError(msg, opts);
   if (status === 429) return new RateLimitError(msg, { ...opts, retryAfter });
   if (status >= 500) return new ServerError(msg, opts);
   return new CabalSpyIDError(msg, opts);

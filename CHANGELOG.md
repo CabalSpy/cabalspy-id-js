@@ -4,6 +4,57 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-28
+
+White-label: a platform keeps its own login, imports its users (by its own user id,
+`external_id`) and their existing wallets, and uses their trades, PnL, leaderboards and
+trading competitions through the Data API.
+
+### Added
+
+- Platform users on `CabalSpyID`: `createPlatformUser`, `importPlatformUsers`, `platformUser`,
+  `updatePlatformUser`, `platformUsers` / `platformUsersRaw` / `iterPlatformUsers`,
+  `deletePlatformUser`, `addPlatformUserWallets`, `deletePlatformUserWallet`,
+  `startWalletVerification`, `walletVerification`, `walletVerificationQr` (SVG),
+  `cancelWalletVerification`, `platformUserProfile`, `platformLeaderboard` /
+  `platformLeaderboardRaw` / `iterPlatformLeaderboard`, `platformSettings`,
+  `updatePlatformSettings`, `inboundStatus`, `enableInbound`, `disableInbound`,
+  `platformUserSession`, `platformUserClaimLink`, `connectPlatformUserX`,
+  `disconnectPlatformUserX`, `linkPlatformUserTelegram`, `platformUserTelegram`,
+  `unlinkPlatformUserTelegram`, `platformUserKol`, `requestPlatformUserVolumeCheck`,
+  `applyPlatformUserKol`. Methods for one user take the `external_id` as a string or
+  `{ external_id }` / `{ csid_id }`.
+- `importAllPlatformUsers(users, options?)`: any number of users in chunks of at most 1,000
+  (and under 1 MB), retries after HTTP 429 honouring Retry-After, re-sends only items rejected
+  with `rate_limited`, never re-sends a chunk that succeeded, and returns one aggregated result
+  in input order. Other errors throw `PlatformImportError` with `result` and `pending`.
+- Trading competitions: `createCompetition`, `competitions` / `competitionsRaw` /
+  `iterCompetitions`, `competition`, `updateCompetition`, `cancelCompetition`,
+  `joinCompetition`, `leaveCompetition`, `competitionParticipants` (+ `Raw`, `iter`),
+  `competitionStandings` (+ `Raw`, `iter`). The iterators page by offset.
+- Types: `PlatformUser`, `PlatformWallet`, `PlatformSettings`, `PlatformImportResult`,
+  `PlatformUserProfile`, `PlatformLeaderboardEntry`, `WalletVerification`, `InboundEvent`,
+  `InboundEventResult`, `Competition`, `CompetitionStanding`, `CompetitionStandingsResponse`
+  and more; constants `PLATFORM_IMPORT_MAX`, `PLATFORM_MAX_WALLETS_PER_REQUEST`,
+  `WALLET_TRUST`, `DATA_SCOPES`, `INBOUND_FORMATS`, `COMPETITION_METRICS`,
+  `COMPETITION_STATUSES`, `MAX_OPEN_COMPETITIONS`. All exported from `cabalspy-id` and
+  `cabalspy-id/api`.
+- Webhook types for `platform_user.created`, `platform_user.claimed`,
+  `platform_user.x_connected`, `wallet.added`, `verification.expired`, `competition.started`,
+  `competition.updated`, `competition.standings` and `competition.ended`
+  (`WebhookEventDataMap`, `TypedWebhookEvent`), `isWebhookEvent(event, ...types)` to narrow a
+  verified event and `verifyTypedWebhook()` for a `switch` on `event.type`.
+- `ConflictError` (409) for `account_claimed`, `too_many_wallets`, `wallet_already_verified`,
+  `last_wallet`, `kol_badge`, `x_required`, `kol_not_eligible`, `volume_check_unavailable`,
+  `competition_limit`, `competition_closed`, `competition_full`, `late_join_closed`. Other new
+  codes map to the existing classes (`platform_user_not_found` 404, `claim_disabled` 403,
+  `wallet_required` 400, `rate_limited` 429, …).
+- README section "White-label (platform users)" and `examples/white-label.mjs`.
+
+### Changed
+
+- 409 responses now throw `ConflictError` (a `CabalSpyIDError` subclass) instead of the base class.
+
 ## [0.5.2] - 2026-10-15
 
 The public thesis API (`https://id.cabalspy.xyz/thesis/v1/...`) and its live socket
@@ -136,6 +187,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.6.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.4.1...v0.5.0

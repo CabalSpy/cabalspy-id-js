@@ -555,7 +555,17 @@ export type WebhookEventType =
   | 'thesis.created'
   | 'thesis.reply'
   | 'thesis.reaction'
-  | 'webhook.test';
+  | 'webhook.test'
+  // white-label (platform users) and trading competitions
+  | 'platform_user.created'
+  | 'platform_user.claimed'
+  | 'platform_user.x_connected'
+  | 'wallet.added'
+  | 'verification.expired'
+  | 'competition.started'
+  | 'competition.updated'
+  | 'competition.standings'
+  | 'competition.ended';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
   /** Event id; the same on every retry. Dedupe on it. */
@@ -590,6 +600,631 @@ export interface ThesisReactionData {
   on: boolean;
   /** The new counts. */
   reactions: Partial<Record<ThesisEmoji | string, number>>;
+}
+
+/**
+ * Added by the server to every per-user webhook about one of YOUR platform users
+ * (white-label): your own user id and their CabalSpy ID.
+ */
+export interface PlatformUserWebhookRef {
+  /** Your user id on your platform, as passed on create or import. */
+  external_id: string;
+  /** The user's CabalSpy ID (same as `sub`). */
+  csid_id: string;
+}
+
+/** `data` of a `platform_user.created` webhook: a platform user was created (API, import or inbound URL). */
+export interface PlatformUserCreatedData extends PlatformUserWebhookRef {
+  sub: string;
+  wallets: { address: string; family: WalletFamily; chains: Chain[] }[];
+}
+
+/** `data` of a `platform_user.claimed` webhook: the person took their account into their own CabalSpy ID. */
+export interface PlatformUserClaimedData extends PlatformUserWebhookRef {
+  /** The person's own CabalSpy ID; their csid_id changes to this. */
+  sub: string;
+  previous_csid_id: string;
+  /** Payment-verified wallets that moved to the person's account. */
+  wallets_moved: number;
+}
+
+/** `data` of a `platform_user.x_connected` webhook. */
+export interface PlatformUserXConnectedData extends PlatformUserWebhookRef {
+  sub: string;
+  x: { id: string; username: string | null; name: string | null };
+}
+
+/** `data` of a `wallet.added` webhook: wallets submitted by the platform (not payment-verified). */
+export interface WalletAddedData extends PlatformWalletAdded, PlatformUserWebhookRef {
+  sub: string;
+  verified: false;
+}
+
+/** `data` of a `verification.expired` webhook: a platform-started verification ended without payment. */
+export interface VerificationExpiredData extends PlatformUserWebhookRef {
+  sub: string;
+  verification_id: string;
+  address: string;
+  chain: Chain;
+  family: WalletFamily;
+}
+
+/** `data` of a `competition.started` webhook (instance level, no `sub`). */
+export interface CompetitionStartedData {
+  competition_id: string;
+  name: string;
+  started_at: string;
+  ends_at: string;
+  participants: number;
+}
+
+/** `data` of a `competition.updated` webhook: a rule changed (also while running). */
+export interface CompetitionUpdatedData {
+  competition_id: string;
+  rules_version: number;
+  /** The phase the change happened in. */
+  during: CompetitionStatus;
+  changes: CompetitionFieldChanges;
+  note: string | null;
+}
+
+/** `data` of a `competition.standings` webhook, every 5 minutes while running. */
+export interface CompetitionStandingsData {
+  competition_id: string;
+  metric: CompetitionMetric;
+  /** The top 20 ranked traders. */
+  top: CompetitionStanding[];
+}
+
+/**
+ * `data` of a `competition.ended` webhook. A cancelled competition sends only
+ * `competition_id`, `cancelled: true` and empty `results`.
+ */
+export interface CompetitionEndedData {
+  competition_id: string;
+  cancelled: boolean;
+  /** The top 100 ranked traders (final). Empty when cancelled. */
+  results: CompetitionStanding[];
+  name?: string;
+  ended_at?: string;
+  metric?: CompetitionMetric;
+}
+
+/** `data` of every webhook type the SDK knows the shape of. */
+export interface WebhookEventDataMap {
+  'thesis.created': ThesisCreatedData;
+  'thesis.reply': ThesisReplyData;
+  'thesis.reaction': ThesisReactionData;
+  'platform_user.created': PlatformUserCreatedData;
+  'platform_user.claimed': PlatformUserClaimedData;
+  'platform_user.x_connected': PlatformUserXConnectedData;
+  'wallet.added': WalletAddedData;
+  'verification.expired': VerificationExpiredData;
+  'competition.started': CompetitionStartedData;
+  'competition.updated': CompetitionUpdatedData;
+  'competition.standings': CompetitionStandingsData;
+  'competition.ended': CompetitionEndedData;
+}
+
+/** A webhook event of type K with its typed `data`. */
+export type TypedWebhookEvent<K extends keyof WebhookEventDataMap = keyof WebhookEventDataMap> = {
+  [T in K]: WebhookEvent<WebhookEventDataMap[T]> & { type: T };
+}[K];
+
+// ── white-label: platform users ─────────────────────────────────────────────
+//
+// A platform that keeps its own login manages ITS users by its own user id
+// (`external_id`, 1-128 printable ASCII characters without spaces).
+
+/** Most users per `POST /v1/platform-users/import` call. */
+export const PLATFORM_IMPORT_MAX = 1000;
+/** Most wallets per request (create, import item, wallets/add). */
+export const PLATFORM_MAX_WALLETS_PER_REQUEST = 10;
+/** Wallet trust settings: count every wallet, or only payment-verified ones. */
+export const WALLET_TRUST = ['all', 'verified_only'] as const;
+export type WalletTrust = (typeof WALLET_TRUST)[number];
+/** `csid`: part of the CabalSpy ID network (default); `platform`: only the platform sees its users. */
+export const DATA_SCOPES = ['csid', 'platform'] as const;
+export type DataScope = (typeof DATA_SCOPES)[number];
+/** Payload formats the inbound URL understands. */
+export const INBOUND_FORMATS = ['csid', 'privy', 'dynamic', 'generic'] as const;
+export type InboundFormat = (typeof INBOUND_FORMATS)[number];
+
+export type WalletFamily = 'solana' | 'evm';
+
+/**
+ * A wallet to import: an address string, or an object. Default chains:
+ * `solana` for a Solana address, every enabled EVM chain for an EVM address.
+ * `source` (1-40 of a-z 0-9 _ . -) records where it came from, e.g. "privy".
+ */
+export type PlatformWalletInput = string | { address: string; chains?: Chain | Chain[]; source?: string };
+
+/** One user for create / import. Every new user needs at least one wallet (at most 10 per request). */
+export interface PlatformUserInput {
+  external_id: string;
+  wallets?: PlatformWalletInput[];
+  /** 1-60 characters, or null to clear. */
+  display_name?: string | null;
+  /** An https URL (max 500 characters), or null to clear. */
+  avatar_url?: string | null;
+}
+
+/**
+ * Trust status of a platform user's wallet:
+ * - `verified`: payment-verified (on `verified_chains`)
+ * - `active`: unverified, counts (tracking, data, leaderboard if allowed)
+ * - `needs_verification`: unverified, the instance only counts verified wallets
+ * - `verified_elsewhere`: unverified, another account verified this address
+ * - `pending`: only a verification was started, nothing counts yet
+ */
+export type PlatformWalletStatus = 'verified' | 'active' | 'needs_verification' | 'verified_elsewhere' | 'pending';
+
+export interface PlatformWallet {
+  address: string;
+  family: WalletFamily;
+  chains: Chain[];
+  verified: boolean;
+  verified_chains: Chain[];
+  status: PlatformWalletStatus;
+  /** Whether the wallet counts for tracking, data and leaderboards. */
+  counts: boolean;
+  source: string | null;
+  verified_at: string | null;
+  added_at: string;
+}
+
+/** A wallet or chain that was new in a create / import / wallets/add call. */
+export interface PlatformWalletAdded {
+  address: string;
+  family: WalletFamily;
+  /** Only the chains that were new. */
+  chains: Chain[];
+  source: string | null;
+}
+
+export type WalletVerificationStatus = 'pending' | 'verified' | 'cancelled' | 'expired';
+
+/** A payment verification of a wallet (the same flow as on id.cabalspy.xyz). */
+export interface WalletVerification {
+  verification_id: string;
+  status: WalletVerificationStatus;
+  chain: Chain;
+  chain_name: string;
+  /** The wallet being verified (the sender of the payment). */
+  address: string;
+  /** Amount to send, formatted, e.g. "0.000123456". */
+  amount: string;
+  /** Amount in base units (lamports / wei) as a string. */
+  amount_base: string;
+  currency: string;
+  decimals: number;
+  receiver: string;
+  expires_at: string;
+  /** 0 unless pending. */
+  seconds_left: number;
+  /** `solana:<receiver>?amount=…` or `ethereum:<receiver>@<chainId>?value=…` (EIP-681). */
+  payment_uri: string;
+  evm_chain_id: number | null;
+  /** Ready-to-show English instructions. */
+  instructions: string;
+  tx_hash: string | null;
+  explorer_url: string | null;
+  created_at: string;
+  /** Your user's id; included on every verification endpoint. */
+  external_id?: string;
+}
+
+/** A platform user (no trading data; see `platformUserProfile()`). */
+export interface PlatformUser {
+  csid_id: string;
+  external_id: string;
+  /** The person took the account into their own CabalSpy ID: they manage it themselves now. */
+  claimed: boolean;
+  claimed_at: string | null;
+  managed: boolean;
+  display_name: string | null;
+  avatar_url: string | null;
+  /** Beyond the plan's user limit: no data until the platform upgrades. */
+  limited: boolean;
+  x: {
+    id: string;
+    username: string;
+    name: string | null;
+    avatar_url: string | null;
+    followers: number | null;
+    following: number | null;
+    verified: boolean | null;
+    verified_type: string | null;
+    created_at: string | null;
+    url: string;
+  } | null;
+  telegram: { username: string | null; name: string | null; linked_at: string | null } | null;
+  kol: { badge: boolean; since: string | null };
+  wallets: PlatformWallet[];
+  pending_verifications: WalletVerification[];
+  created_at: string;
+}
+
+/** Result of `POST /v1/platform-users` (create or update). */
+export interface PlatformUserUpsertResult extends PlatformUser {
+  /** true: new user (HTTP 201); false: existing user updated (HTTP 200). */
+  created: boolean;
+  wallets_added: PlatformWalletAdded[];
+}
+
+export type PlatformImportStatus = 'created' | 'updated' | 'unchanged' | 'rejected';
+
+export interface PlatformImportItemResult {
+  external_id: string | null;
+  status: PlatformImportStatus;
+  /** Not on rejected items. */
+  csid_id?: string;
+  wallets_added?: PlatformWalletAdded[];
+  /** Only on rejected items, e.g. `plan_user_limit`, `wallet_required`, `invalid_address`, `rate_limited`. */
+  error?: { code: string; message: string };
+}
+
+export interface PlatformImportSummary {
+  created: number;
+  updated: number;
+  unchanged: number;
+  rejected: number;
+}
+
+/** Result of `POST /v1/platform-users/import`; `results` are in input order. */
+export interface PlatformImportResult {
+  summary: PlatformImportSummary;
+  results: PlatformImportItemResult[];
+}
+
+export interface PlatformWalletsAddResult {
+  external_id: string;
+  wallets_added: PlatformWalletAdded[];
+  /** Every wallet of the user, after the change. */
+  wallets: PlatformWallet[];
+}
+
+export interface PlatformUserDeleteResult {
+  external_id: string;
+  /** false for a claimed user: only the link to your platform was removed, the person keeps their account. */
+  deleted: boolean;
+  unlinked: boolean;
+}
+
+export interface PlatformWalletDeleteResult {
+  external_id: string;
+  address: string;
+  removed: true;
+}
+
+/** Instance settings for platform users. */
+export interface PlatformSettings {
+  /** The instance's name. */
+  name: string;
+  white_label: boolean;
+  data_scope: DataScope;
+  /** Same as `data_scope === 'csid'`. */
+  network_sharing: boolean;
+  wallet_trust: WalletTrust;
+  leaderboard_trust: WalletTrust;
+  /** Default: on unless `white_label` is on. */
+  claim_links: boolean;
+  telegram_alerts: boolean;
+  inbound: { enabled: boolean; last_event_at: string | null };
+}
+
+/** Settings to change; only what you pass changes. */
+export interface PlatformSettingsUpdate {
+  white_label?: boolean;
+  data_scope?: DataScope;
+  /** Same as `data_scope` (`true` = `csid`). */
+  network_sharing?: boolean;
+  wallet_trust?: WalletTrust;
+  leaderboard_trust?: WalletTrust;
+  claim_links?: boolean;
+  telegram_alerts?: boolean;
+}
+
+export interface InboundStatus {
+  enabled: boolean;
+  last_event_at: string | null;
+  formats: InboundFormat[];
+}
+
+export interface InboundEnabled {
+  enabled: true;
+  /** The secret inbound URL. Shown once; enabling again replaces it. */
+  url: string;
+  note: string;
+}
+
+/**
+ * The SDK's own payload for the inbound URL (`format: csid`). Provider payloads
+ * (Privy, Dynamic, generic) are understood as well: the user id is taken from
+ * `user.id` / `data.userId` / `userId` / `data.id`, the wallets from every
+ * address field. An event name containing "delet" (not "wallet") deletes the user.
+ */
+export interface InboundEvent {
+  event: 'user.created' | 'user.updated' | 'wallet.added' | 'user.deleted' | string;
+  external_id: string;
+  wallets?: PlatformWalletInput[];
+  display_name?: string | null;
+  avatar_url?: string | null;
+}
+
+/** Response of the inbound URL. Business errors come back as `accepted: false` (HTTP 200). */
+export type InboundEventResult =
+  | {
+      accepted: true;
+      result: 'created' | 'updated';
+      external_id: string;
+      csid_id: string;
+      wallets_added: PlatformWalletAdded[];
+    }
+  | { accepted: true; result: 'deleted'; external_id: string; deleted: boolean; unlinked: boolean }
+  | {
+      accepted: true;
+      result: 'wallets_removed';
+      external_id: string;
+      wallets_removed: string[];
+      /** Kept wallets, e.g. code `last_wallet` or `wallet_not_found`. */
+      wallets_not_removed: { address: string; code: string }[];
+    }
+  | { accepted: true; result: 'ignored'; external_id: string; note: string }
+  | { accepted: true; result: 'unknown_user' | 'waiting_for_wallet'; external_id: string }
+  | { accepted: false; error: { code: string; message: string } };
+
+/** 15-minute token for the embeddable verify widget. */
+export interface PlatformUserSession {
+  external_id: string;
+  client_id: string;
+  /** `pvs_…` */
+  session: string;
+  expires_at: string;
+  /** Seconds (900). */
+  expires_in: number;
+}
+
+/** A 24-hour link the person opens to take the account into their own CabalSpy ID. */
+export interface PlatformClaimLink {
+  external_id: string;
+  url: string;
+  expires_at: string;
+}
+
+/** Send the person to `authorize_url` (valid 10 minutes) to connect X. */
+export interface PlatformXConnect {
+  external_id: string;
+  authorize_url: string;
+  expires_at: string;
+}
+
+export interface PlatformXDisconnect {
+  external_id: string;
+  disconnected: boolean;
+}
+
+/** The person opens `deep_link` (t.me) to connect Telegram. */
+export interface PlatformTelegramLink {
+  external_id: string;
+  code: string;
+  deep_link: string;
+  expires_at: string | null;
+}
+
+export interface PlatformTelegramStatus {
+  external_id: string;
+  linked: boolean;
+  username: string | null;
+  linked_at: string | null;
+}
+
+export interface PlatformTelegramUnlink {
+  external_id: string;
+  linked: false;
+}
+
+export interface PlatformKolStatus {
+  external_id: string;
+  badge: boolean;
+  eligible: boolean;
+  /** The KOL criteria and whether each is met. */
+  criteria: Record<string, unknown>[];
+  volume_7d_usd: number | null;
+  /** When the next on-chain volume check may be requested. */
+  volume_check_next_at: string | null;
+  application: { status: string; applied_at: string | null; reviewed_at: string | null } | null;
+}
+
+export interface PlatformKolVolumeCheck {
+  external_id: string;
+  queued: true;
+}
+
+export interface PlatformKolApply {
+  external_id: string;
+  application: 'pending';
+}
+
+/** Per-wallet numbers on a platform user's profile. */
+export type PlatformProfileWalletStats = LeaderboardEntry['period_stats'] & {
+  address: string;
+  verified: boolean;
+  win_rate_percentage: number;
+};
+
+/** Trading on one chain, summed over the user's wallets that count. */
+export interface PlatformProfileTrading {
+  blockchain: Chain;
+  currency: Currency;
+  period: Period;
+  total_buy: number;
+  total_buy_usd: number;
+  total_sell: number;
+  total_sell_usd: number;
+  total_volume: number;
+  total_volume_usd: number;
+  realized_pnl: number;
+  realized_pnl_usd: number;
+  total_txn: number;
+  buy_txn: number;
+  sell_txn: number;
+  win_count: number;
+  closed_count: number;
+  win_rate_percentage: number;
+  tokens: number;
+  wallets: PlatformProfileWalletStats[];
+}
+
+/** Everything for a profile page in one call (`GET /v1/platform-users/profile`). */
+export interface PlatformUserProfile extends Omit<PlatformUser, 'kol'> {
+  period: Period;
+  trading: PlatformProfileTrading[];
+  /** The 20 newest trades (without the trader block). */
+  recent_trades: Omit<Trade, 'trader'>[];
+  theses: { total: number; latest: Thesis[] };
+  trade_feed: { traders: number; in_trade_feeds: number };
+  kol: {
+    badge: boolean;
+    since: string | null;
+    application: { status: string; applied_at: string | null; note: string | null } | null;
+  };
+  /** Data API paths for each wallet that counts. */
+  links: { blockchain: Chain; address: string; tracker: string; history: string; holdings: string; pnl_calendar: string }[];
+}
+
+export interface PlatformLeaderboardEntry extends Omit<LeaderboardEntry, 'profile'> {
+  profile: LeaderboardEntry['profile'] & { profile_url: null };
+  /** Your user's id. */
+  external_id: string | null;
+  /** Whether this wallet is payment-verified on the chain. */
+  verified: boolean;
+}
+
+/** Leaderboard of your own platform users. Pagination is in the envelope (`*Raw`). */
+export interface PlatformLeaderboardResponse {
+  blockchain: Chain;
+  period: Period;
+  sort: LeaderboardSort;
+  currency: Currency;
+  /** `verified` when the instance or the request only counts payment-verified wallets. */
+  trust: 'all' | 'verified';
+  leaderboard: PlatformLeaderboardEntry[];
+}
+
+// ── trading competitions ────────────────────────────────────────────────────
+
+export const COMPETITION_METRICS = ['pnl_usd', 'pnl', 'volume_usd', 'volume', 'trades', 'win_rate'] as const;
+export type CompetitionMetric = (typeof COMPETITION_METRICS)[number];
+
+/** scheduled -> waiting (start time passed, not enough participants) -> running -> ended / cancelled */
+export const COMPETITION_STATUSES = ['scheduled', 'waiting', 'running', 'ended', 'cancelled'] as const;
+export type CompetitionStatus = (typeof COMPETITION_STATUSES)[number];
+
+/** `opt_in`: users join one by one; `all_users`: every platform user takes part. */
+export type CompetitionEnrollment = 'opt_in' | 'all_users';
+
+/** At most this many competitions per developer account at a time (scheduled + running). */
+export const MAX_OPEN_COMPETITIONS = 5;
+
+/** Recorded rule changes: field -> { from, to } (duration as `duration_hours`). */
+export type CompetitionFieldChanges = Record<string, { from: unknown; to: unknown }>;
+
+export interface CompetitionChange {
+  rules_version: number;
+  changed_at: string;
+  during: CompetitionStatus;
+  changes: CompetitionFieldChanges;
+  note: string | null;
+}
+
+export interface Competition {
+  id: string;
+  name: string;
+  description: string | null;
+  chain: Chain;
+  chain_name: string;
+  metric: CompetitionMetric;
+  wallet_trust: WalletTrust;
+  enrollment: CompetitionEnrollment;
+  status: CompetitionStatus;
+  starts_at: string | null;
+  duration_hours: number;
+  started_at: string | null;
+  ends_at: string | null;
+  ended_at: string | null;
+  min_participants: number;
+  max_participants: number | null;
+  participants: number;
+  min_trades: number;
+  min_volume_usd: number;
+  late_join: boolean;
+  /** Whatever you passed (any JSON, max 5000 characters). */
+  prizes: unknown;
+  rules_version: number;
+  standings_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Detail, create, update and cancel only: every rule change. */
+  changes?: CompetitionChange[];
+  changed_while_running?: boolean;
+}
+
+export interface CompetitionParticipant {
+  external_id: string | null;
+  csid_id: string;
+  joined_at: string;
+}
+
+export interface CompetitionStanding {
+  /** null: below the minimums (listed, not ranked). */
+  rank: number | null;
+  ranked: boolean;
+  external_id: string | null;
+  csid_id: string;
+  /** The value of the competition's metric. */
+  score: number;
+  pnl: number;
+  pnl_usd: number;
+  volume: number;
+  volume_usd: number;
+  trades: number;
+  buys: number;
+  sells: number;
+  win_count: number;
+  closed_count: number;
+  win_rate: number;
+  tokens: number;
+  /** Wallets that count on the competition's chain. */
+  wallets: number;
+}
+
+/** Standings: ranked first, then the unranked. Pagination (offset) is in the envelope. */
+export interface CompetitionStandingsResponse {
+  competition_id: string;
+  status: CompetitionStatus;
+  metric: CompetitionMetric;
+  rules_version: number;
+  /** When the standings were computed (every 5 minutes while running). */
+  updated_at: string | null;
+  /** true once the competition ended: these are the results. */
+  final: boolean;
+  standings: CompetitionStanding[];
+}
+
+export interface CompetitionJoinResult {
+  competition_id: string;
+  external_id: string;
+  joined: true;
+  /** true when the user was already a participant (HTTP 200 instead of 201). */
+  already: boolean;
+}
+
+export interface CompetitionLeaveResult {
+  competition_id: string;
+  external_id: string;
+  /** false when the user was not a participant. */
+  left: boolean;
 }
 
 // ── token theses ────────────────────────────────────────────────────────────
