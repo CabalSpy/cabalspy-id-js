@@ -8,6 +8,8 @@ import {
   type CompetitionStandingsData,
   type CompetitionStartedData,
   type CopyTradeInstructionData,
+  type TradeFeedThesisData,
+  type TradeFeedTradeData,
   WebhookVerificationError,
   isWebhookEvent,
   signWebhook,
@@ -266,6 +268,61 @@ describe('copy trading webhooks', () => {
     if (isWebhookEvent(plain, 'copy_trade.instruction')) {
       const d: CopyTradeInstructionData = plain.data;
       expect(d.action.min_price_usd).toBe(0.291);
+    } else {
+      throw new Error('not narrowed');
+    }
+  });
+});
+
+describe('trade feed webhooks', () => {
+  const trader = { csid_id: 't-1', username: 'MazeCCC', name: 'Maze', image_url: null, kol: true, profile_url: null };
+  const links = { token: null, terminal: null, profile: null };
+
+  it('narrows trade_feed.trade to the trade item plus recipients', async () => {
+    const data = {
+      id: 'tk1',
+      type: 'trade',
+      timestamp: '2026-11-01T18:40:05Z',
+      trader,
+      trade: { blockchain: 'solana', mint: 'So1', symbol: 'CPT', name: null, logo: null, side: 'buy', label: 'new', sold_percent: null, amount_native: 1.5, currency: 'SOL', amount_usd: 225, token_amount: 500, price_usd: 0.45, pnl_usd: null, pnl_percent: null, wallet: 'W1', wallet_url: null, tx_signature: 'sig', tx_url: null },
+      links,
+      recipients: ['f-1'],
+      recipients_external: ['u1'],
+    };
+    const payload = JSON.stringify({ id: 'evt_tf', type: 'trade_feed.trade', created_at: '2026-11-01T18:40:06Z', sandbox: false, data });
+    const headers = { 'webhook-id': 'evt_tf', 'webhook-timestamp': String(now), 'webhook-signature': serverSign(rawKey, 'evt_tf', now, payload) };
+    const event = await verifyTypedWebhook({ payload, headers, secret: SECRET, now });
+    if (event.type !== 'trade_feed.trade') throw new Error('not narrowed');
+    expect(event.data.trade.amount_native).toBe(1.5);
+    expect(event.data.recipients_external).toEqual(['u1']);
+    const plain = await verifyWebhook({ payload, headers, secret: SECRET, now });
+    expect(isWebhookEvent(plain, 'trade_feed.thesis')).toBe(false);
+    if (isWebhookEvent(plain, 'trade_feed.trade')) {
+      const d: TradeFeedTradeData = plain.data;
+      expect(d.recipients).toEqual(['f-1']);
+    } else {
+      throw new Error('not narrowed');
+    }
+  });
+
+  it('narrows trade_feed.thesis to the thesis item plus recipients', async () => {
+    const data = {
+      id: 'h9',
+      type: 'thesis',
+      timestamp: '2026-11-01T18:41:00Z',
+      trader,
+      thesis: { id: '9', blockchain: 'solana', mint: 'So1', symbol: 'CPT', name: null, logo: null, stance: 'bear', body: 'Top is in.', likes: 0, replies: 0, url: 'https://id.cabalspy.xyz/try/thesis' },
+      links,
+      recipients: ['f-1', 'f-2'],
+      recipients_external: [],
+    };
+    const payload = JSON.stringify({ id: 'evt_th', type: 'trade_feed.thesis', created_at: '2026-11-01T18:41:01Z', sandbox: false, data });
+    const headers = { 'webhook-id': 'evt_th', 'webhook-timestamp': String(now), 'webhook-signature': serverSign(rawKey, 'evt_th', now, payload) };
+    const plain = await verifyWebhook({ payload, headers, secret: SECRET, now });
+    if (isWebhookEvent(plain, 'trade_feed.thesis')) {
+      const d: TradeFeedThesisData = plain.data;
+      expect(d.thesis.stance).toBe('bear');
+      expect(d.recipients).toHaveLength(2);
     } else {
       throw new Error('not narrowed');
     }

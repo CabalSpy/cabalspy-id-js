@@ -43,6 +43,8 @@ export interface Pagination {
   limit: number;
   /** Absent on /wallets/history, `null` on /transactions/latest. */
   total?: number | null;
+  /** `/trade-feed/traders`: the most traders a Trade Feed can hold (300). */
+  max?: number;
   has_more: boolean;
   next_cursor: string | null;
 }
@@ -580,7 +582,10 @@ export type WebhookEventType =
   | 'callout.scored'
   | 'callout.final'
   // copy trading
-  | 'copy_trade.instruction';
+  | 'copy_trade.instruction'
+  // trade feed
+  | 'trade_feed.trade'
+  | 'trade_feed.thesis';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
   /** Event id; the same on every retry. Dedupe on it. */
@@ -736,6 +741,16 @@ export interface CalloutFinalData {
  */
 export type CopyTradeInstructionData = CopyInstructionEvent;
 
+/**
+ * `data` of a `trade_feed.trade` webhook: a trade of a trader in your users'
+ * Trade Feeds (once per trade, not per user), plus `recipients` and
+ * `recipients_external`. Same as the stream event. Has no `sub`.
+ */
+export type TradeFeedTradeData = TradeFeedTradeEvent;
+
+/** `data` of a `trade_feed.thesis` webhook: a new thesis, plus `recipients` and `recipients_external`. */
+export type TradeFeedThesisData = TradeFeedThesisEvent;
+
 /** `data` of every webhook type the SDK knows the shape of. */
 export interface WebhookEventDataMap {
   'thesis.created': ThesisCreatedData;
@@ -755,6 +770,8 @@ export interface WebhookEventDataMap {
   'callout.scored': CalloutScoredData;
   'callout.final': CalloutFinalData;
   'copy_trade.instruction': CopyTradeInstructionData;
+  'trade_feed.trade': TradeFeedTradeData;
+  'trade_feed.thesis': TradeFeedThesisData;
 }
 
 /** A webhook event of type K with its typed `data`. */
@@ -1856,3 +1873,167 @@ export interface CopyInstruction extends CopyInstructionBase {
 export interface CopyInstructionEvent extends CopyInstructionBase {
   external_id: string | null;
 }
+
+// ── trade feed ──────────────────────────────────────────────────────────────
+//
+// A user's Trade Feed: the traders they follow, every trade and thesis of
+// those traders, alerts filtered per trader, and the copy settings.
+
+/** `all`: trades and theses; `buys` / `sells`: only those trades; `theses`: only theses. */
+export const TRADE_FEED_FILTERS = ['all', 'buys', 'sells', 'theses'] as const;
+export type TradeFeedFilter = (typeof TRADE_FEED_FILTERS)[number];
+
+/**
+ * What a trade did to the trader's position: `new` (first buy), `add` (bought
+ * more), `partial` (sold part, see `sold_percent`), `close` (sold everything),
+ * `sell` (a sell without a known buy).
+ */
+export const TRADE_LABELS = ['new', 'add', 'partial', 'close', 'sell'] as const;
+export type TradeLabel = (typeof TRADE_LABELS)[number];
+
+/** Traders per Trade Feed. */
+export const MAX_TRADE_FEED_TRADERS = 300;
+/** Changes (adding traders) per user and hour; more fail with RateLimitError `rate_limited`. */
+export const TRADE_FEED_CHANGES_PER_HOUR = 120;
+/** Upper bound of `min_sol` / `min_bnb` / `min_eth` (0 = every trade). */
+export const TRADE_FEED_MAX_MIN_NATIVE = 1_000_000;
+
+/** A trade in the Trade Feed (`item.trade`). */
+export interface TradeFeedTrade {
+  blockchain: Chain;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  side: 'buy' | 'sell';
+  label: TradeLabel | (string & {});
+  /** `partial`: the share of the position sold, 0-100; else null. */
+  sold_percent: number | null;
+  /** Trade size in the chain's native coin (`currency`). */
+  amount_native: number;
+  currency: Currency | null;
+  amount_usd: number | null;
+  token_amount: number | null;
+  price_usd: number | null;
+  /** Sells with a known entry: realized PnL of this sell against the average entry. */
+  pnl_usd: number | null;
+  pnl_percent: number | null;
+  wallet: string;
+  wallet_url: string | null;
+  tx_signature: string;
+  tx_url: string | null;
+}
+
+/** A thesis in the Trade Feed (`item.thesis`). */
+export interface TradeFeedThesis {
+  id: string;
+  blockchain: Chain;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  stance: ThesisStance | null;
+  body: string;
+  likes: number;
+  replies: number;
+  url: string;
+}
+
+/** token (the CabalSpy Terminal on Solana and BNB Chain, else the token's theses), terminal (null elsewhere), profile. */
+export interface TradeFeedLinks {
+  token: string | null;
+  terminal: string | null;
+  profile: string | null;
+}
+
+/** A trade item; its `id` is the same in the feed, the webhook, the stream and the notifications. */
+export interface TradeFeedTradeItem {
+  id: string;
+  type: 'trade';
+  timestamp: string;
+  trader: CopyTrader;
+  trade: TradeFeedTrade;
+  links: TradeFeedLinks;
+  /** `GET /v1/trade-feed` only: the item's position in the feed. */
+  cursor?: string;
+}
+
+/** A thesis item; `id` is `h` followed by the thesis id. */
+export interface TradeFeedThesisItem {
+  id: string;
+  type: 'thesis';
+  timestamp: string;
+  trader: CopyTrader;
+  thesis: TradeFeedThesis;
+  links: TradeFeedLinks;
+  /** `GET /v1/trade-feed` only. */
+  cursor?: string;
+}
+
+/** `GET /v1/trade-feed`: a trade or a thesis (narrow on `type`). */
+export type TradeFeedItem = TradeFeedTradeItem | TradeFeedThesisItem;
+
+/** A user's alert settings for one trader, plus the copy settings. */
+export interface TradeFeedSettings {
+  notify_buys: boolean;
+  notify_sells: boolean;
+  notify_theses: boolean;
+  /** Minimum trade size for alerts per native coin (0 = every trade). */
+  min_native: { SOL: number; BNB: number; ETH: number };
+  /** No alerts for this trader. */
+  muted: boolean;
+  /** How the user copies this trader. */
+  copy: CopySettings;
+}
+
+/** `GET /v1/trade-feed/traders`: one trader in the user's Trade Feed. */
+export interface TradeFeedTrader {
+  trader: CopyTrader;
+  /** false while the trader keeps their trading private: they stay listed, but nothing of them shows in the feed. */
+  trading_public: boolean;
+  added_at: string;
+  /** In how many Trade Feeds the trader is. */
+  in_trade_feeds: number;
+  settings: TradeFeedSettings;
+}
+
+/** `POST /v1/trade-feed/traders` (HTTP 201 when added, 200 when already there). */
+export interface TradeFeedTraderResult {
+  in_trade_feed: true;
+  /** true when the trader was added, false when they were already in the Trade Feed. */
+  created: boolean;
+  trader: CopyTrader;
+  settings: TradeFeedSettings;
+}
+
+/** `POST /v1/trade-feed/traders/delete`. */
+export interface TradeFeedRemoveResult {
+  in_trade_feed: false;
+  /** false when the trader was not in the Trade Feed. */
+  removed: boolean;
+}
+
+/** `GET /v1/trade-feed/notifications`: an alert that passed the user's filters. */
+export interface TradeFeedNotification {
+  id: number;
+  event: 'trade_feed.trade' | 'trade_feed.thesis';
+  /** A ready-made line in plain text. */
+  text: string | null;
+  created_at: string;
+  data: TradeFeedItem;
+}
+
+/** Who to tell about a Trade Feed event (webhook and stream). */
+export interface TradeFeedRecipients {
+  /** csid_ids of your users who have the trader in their Trade Feed and whose filters let the event through. */
+  recipients: string[];
+  /** Your own user ids (external_id) of the recipients who are platform users. */
+  recipients_external: string[];
+}
+
+/** Webhook and stream `trade_feed.trade`: the trade item plus the recipients. */
+export type TradeFeedTradeEvent = TradeFeedTradeItem & TradeFeedRecipients;
+/** Webhook and stream `trade_feed.thesis`: the thesis item plus the recipients. */
+export type TradeFeedThesisEvent = TradeFeedThesisItem & TradeFeedRecipients;
+/** A Trade Feed webhook or stream event's `data`. */
+export type TradeFeedEvent = TradeFeedTradeEvent | TradeFeedThesisEvent;

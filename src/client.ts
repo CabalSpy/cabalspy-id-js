@@ -24,6 +24,7 @@ import { CabalSpyIDStream, type StreamOptions } from './stream';
 import { ThesesStream, type ThesesStreamOptions } from './thesesStream';
 import { CalloutsStream, type CalloutsStreamOptions } from './calloutsStream';
 import { CopyTradingStream, type CopyTradingStreamOptions } from './copyTradingStream';
+import { TradeFeedStream, type TradeFeedStreamOptions } from './tradeFeedStream';
 import {
   type ApiResponse,
   CALLOUT_COMPETITION_METRICS,
@@ -117,6 +118,15 @@ import {
   type ThesisStance,
   type ThesisSummary,
   type Trade,
+  TRADE_FEED_FILTERS,
+  TRADE_FEED_MAX_MIN_NATIVE,
+  MAX_TRADE_FEED_TRADERS,
+  type TradeFeedFilter,
+  type TradeFeedItem,
+  type TradeFeedNotification,
+  type TradeFeedRemoveResult,
+  type TradeFeedTrader,
+  type TradeFeedTraderResult,
   type TradingCompetitionMetric,
   type TrackerResponse,
   WALLET_TRUST,
@@ -131,6 +141,7 @@ export const DEFAULT_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/stream';
 export const DEFAULT_THESES_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/theses/stream';
 export const DEFAULT_CALLOUTS_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/callouts/stream';
 export const DEFAULT_COPY_TRADING_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/copy-trading/stream';
+export const DEFAULT_TRADE_FEED_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/trade-feed/stream';
 
 export interface CabalSpyIDOptions {
   /**
@@ -153,6 +164,8 @@ export interface CabalSpyIDOptions {
   calloutsStreamUrl?: string;
   /** Copy trading stream URL. Default: wss://api-id.cabalspy.xyz/v1/copy-trading/stream */
   copyTradingStreamUrl?: string;
+  /** Trade Feed stream URL. Default: wss://api-id.cabalspy.xyz/v1/trade-feed/stream */
+  tradeFeedStreamUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30_000 */
   timeout?: number;
   /** Retries on 429, 5xx and network errors. Default: 2 */
@@ -593,6 +606,50 @@ export interface ReportCopyInstructionParams {
   note?: string;
 }
 
+// -- trade feed --------------------------------------------------------------
+
+/** `GET /v1/trade-feed`: the user plus the filter and page. */
+export type TradeFeedParams = PlatformUserRef & {
+  /** Default: all */
+  filter?: TradeFeedFilter;
+  /** 1-100. Default: 30 */
+  limit?: number;
+  cursor?: string;
+};
+
+/** `GET /v1/trade-feed/traders`. */
+export type TradeFeedTradersParams = PlatformUserRef & {
+  /** 1-300. Default: 100 */
+  limit?: number;
+  cursor?: string;
+};
+
+/** `GET /v1/trade-feed/notifications`. */
+export type TradeFeedNotificationsParams = PlatformUserRef & {
+  /** 1-100. Default: 50 */
+  limit?: number;
+  cursor?: string;
+};
+
+/** The user's alert settings for one trader; only what you pass is sent. */
+export interface TradeFeedTraderSettings {
+  notify_buys?: boolean;
+  notify_sells?: boolean;
+  notify_theses?: boolean;
+  /** Minimum trade size for alerts in SOL, 0-1,000,000 (0 = every trade). */
+  min_sol?: number;
+  min_bnb?: number;
+  min_eth?: number;
+  /** No alerts for this trader. */
+  muted?: boolean;
+}
+
+/** `POST /v1/trade-feed/traders`: the user, the trader (`trader` or `trader_external_id`) and optional settings. */
+export type AddTradeFeedTraderParams = PlatformUserRef & CopyTraderRef & TradeFeedTraderSettings;
+
+/** `POST /v1/trade-feed/traders/delete`. */
+export type RemoveTradeFeedTraderParams = PlatformUserRef & CopyTraderRef;
+
 function buildQuery(params: Query): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -712,6 +769,46 @@ function assertNumber(v: unknown, parameter: string, low: number, high: number, 
 
 const COPY_SETTING_FIELDS = ['enabled', 'mode', 'amount_usd', 'percent', 'max_usd', 'sides', 'slippage_bps'] as const;
 
+const TRADE_FEED_BOOLS = ['notify_buys', 'notify_sells', 'notify_theses', 'muted'] as const;
+const TRADE_FEED_MINIMUMS = ['min_sol', 'min_bnb', 'min_eth'] as const;
+
+function assertLimit(limit: unknown, high: number): void {
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > high)) {
+    throw new BadRequestError(`limit must be a whole number from 1 to ${high}.`, { code: 'invalid_parameter', parameter: 'limit' });
+  }
+}
+
+/** A Trade Feed read: exactly one user, `limit` 1-`high`. */
+function tradeFeedQuery(
+  params: PlatformUserId | (PlatformUserRef & { limit?: number; cursor?: string }),
+  high: number,
+  extra: Query = {},
+): Query {
+  const p = (typeof params === 'string' ? {} : (params ?? {})) as { limit?: number; cursor?: string };
+  const who = userRef(params as PlatformUserId);
+  assertLimit(p.limit, high);
+  return { ...who, ...extra, limit: p.limit, cursor: p.cursor };
+}
+
+/** Alert settings to send: only what was given, checked like the server does. */
+function tradeFeedSettings(rest: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of TRADE_FEED_BOOLS) {
+    if (rest[k] === undefined) continue;
+    if (typeof rest[k] !== 'boolean') throw new BadRequestError(`${k} must be true or false.`, { code: 'invalid_parameter', parameter: k });
+    out[k] = rest[k];
+  }
+  for (const k of TRADE_FEED_MINIMUMS) {
+    const v = rest[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > TRADE_FEED_MAX_MIN_NATIVE) {
+      throw new BadRequestError(`${k} must be a number from 0 to 1,000,000 (0 = every trade).`, { code: 'invalid_parameter', parameter: k });
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
 function assertHitX(v: unknown): void {
   if (v === undefined) return;
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 1 || v > 1000) {
@@ -748,6 +845,7 @@ export class CabalSpyID {
   readonly thesesStreamUrl: string;
   readonly calloutsStreamUrl: string;
   readonly copyTradingStreamUrl: string;
+  readonly tradeFeedStreamUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
   readonly instance?: string;
@@ -767,6 +865,7 @@ export class CabalSpyID {
     this.thesesStreamUrl = (options.thesesStreamUrl ?? DEFAULT_THESES_STREAM_URL).replace(/\/+$/, '');
     this.calloutsStreamUrl = (options.calloutsStreamUrl ?? DEFAULT_CALLOUTS_STREAM_URL).replace(/\/+$/, '');
     this.copyTradingStreamUrl = (options.copyTradingStreamUrl ?? DEFAULT_COPY_TRADING_STREAM_URL).replace(/\/+$/, '');
+    this.tradeFeedStreamUrl = (options.tradeFeedStreamUrl ?? DEFAULT_TRADE_FEED_STREAM_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.extraHeaders = options.headers ?? {};
@@ -1872,6 +1971,111 @@ export class CabalSpyID {
     });
   }
 
+  // ── trade feed ────────────────────────────────────────────────────────────
+  // A user's Trade Feed: the traders they follow, every trade and thesis of
+  // them, alerts and the copy settings. Every call acts in the name of one user
+  // (an external_id string, or { external_id | csid_id }) who signed in to your
+  // app with the scope `trade_feed` (else PermissionError `consent_required`)
+  // and is within your plan's user limit (PlanUserLimitError `plan_user_limit`
+  // for an `anon_` id). An unknown external_id is a NotFoundError
+  // `platform_user_not_found`.
+
+  /**
+   * GET /v1/trade-feed — the user's Trade Feed, newest first: every trade and
+   * thesis of the traders in it (traders who keep their trading private are
+   * left out). Narrow the items on `type`.
+   */
+  async tradeFeed(params: PlatformUserId | TradeFeedParams): Promise<TradeFeedItem[]> {
+    return (await this.tradeFeedRaw(params)).data;
+  }
+
+  async tradeFeedRaw(params: PlatformUserId | TradeFeedParams): Promise<Envelope<TradeFeedItem[]>> {
+    const filter = typeof params === 'string' ? undefined : (params as TradeFeedParams | undefined)?.filter;
+    assertOneOf(filter, TRADE_FEED_FILTERS, 'filter');
+    return this.getRaw<TradeFeedItem[]>('/trade-feed', tradeFeedQuery(params, 100, { filter }));
+  }
+
+  /** Iterates over the user's Trade Feed, newest first, following `next_cursor`. */
+  async *iterTradeFeed(params: PlatformUserId | TradeFeedParams): AsyncGenerator<TradeFeedItem, void, void> {
+    const p = (typeof params === 'string' ? { external_id: params } : params) as TradeFeedParams;
+    for await (const page of this.pages((cursor) => this.tradeFeedRaw({ ...p, cursor }), { cursor: p?.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /**
+   * GET /v1/trade-feed/traders — the traders in the user's Trade Feed, most
+   * recently added first, with the user's alert and copy settings for each.
+   * `tradeFeedTradersRaw()` has `pagination.total` and `pagination.max` (300).
+   */
+  async tradeFeedTraders(params: PlatformUserId | TradeFeedTradersParams): Promise<TradeFeedTrader[]> {
+    return (await this.tradeFeedTradersRaw(params)).data;
+  }
+
+  async tradeFeedTradersRaw(params: PlatformUserId | TradeFeedTradersParams): Promise<Envelope<TradeFeedTrader[]>> {
+    return this.getRaw<TradeFeedTrader[]>('/trade-feed/traders', tradeFeedQuery(params, MAX_TRADE_FEED_TRADERS));
+  }
+
+  /** Iterates over every trader in the user's Trade Feed, following `next_cursor`. */
+  async *iterTradeFeedTraders(params: PlatformUserId | TradeFeedTradersParams): AsyncGenerator<TradeFeedTrader, void, void> {
+    const p = (typeof params === 'string' ? { external_id: params } : params) as TradeFeedTradersParams;
+    for await (const page of this.pages((cursor) => this.tradeFeedTradersRaw({ ...p, cursor }), { cursor: p?.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /**
+   * POST /v1/trade-feed/traders — adds a trader (handle with or without @, or
+   * csid_id; `trader_external_id` for one of your platform users) to the user's
+   * Trade Feed, with the user's default alert settings unless you pass others.
+   * Already there: the settings you pass are updated. `created` is true (HTTP
+   * 201) when the trader was added.
+   *
+   * Errors: BadRequestError `cannot_add_self`, PermissionError `trading_private`,
+   * NotFoundError `trader_not_found`, ConflictError `trade_feed_full` (300
+   * traders), RateLimitError `rate_limited` (more than 120 changes in an hour;
+   * not retried).
+   */
+  async addTradeFeedTrader(params: AddTradeFeedTraderParams): Promise<TradeFeedTraderResult> {
+    const [ref, rest] = splitRef(params);
+    const target = copyTrader(rest as { trader?: string; trader_external_id?: string }, true);
+    return this.post<TradeFeedTraderResult>('/trade-feed/traders', { ...ref, ...target, ...tradeFeedSettings(rest) });
+  }
+
+  /**
+   * POST /v1/trade-feed/traders/delete — removes a trader from the user's Trade
+   * Feed; this also ends copying of that trader. `removed` is false when the
+   * trader was not in it.
+   */
+  async removeTradeFeedTrader(params: RemoveTradeFeedTraderParams): Promise<TradeFeedRemoveResult> {
+    const [ref, rest] = splitRef(params);
+    const target = copyTrader(rest as { trader?: string; trader_external_id?: string }, true);
+    return this.post<TradeFeedRemoveResult>('/trade-feed/traders/delete', { ...ref, ...target });
+  }
+
+  /**
+   * GET /v1/trade-feed/notifications — the user's recent Trade Feed alerts,
+   * newest first: every trade and thesis that passed the user's filters for
+   * that trader. For an alert inbox without webhooks.
+   */
+  async tradeFeedNotifications(params: PlatformUserId | TradeFeedNotificationsParams): Promise<TradeFeedNotification[]> {
+    return (await this.tradeFeedNotificationsRaw(params)).data;
+  }
+
+  async tradeFeedNotificationsRaw(params: PlatformUserId | TradeFeedNotificationsParams): Promise<Envelope<TradeFeedNotification[]>> {
+    return this.getRaw<TradeFeedNotification[]>('/trade-feed/notifications', tradeFeedQuery(params, 100));
+  }
+
+  /** Iterates over the user's Trade Feed alerts, newest first, following `next_cursor`. */
+  async *iterTradeFeedNotifications(
+    params: PlatformUserId | TradeFeedNotificationsParams,
+  ): AsyncGenerator<TradeFeedNotification, void, void> {
+    const p = (typeof params === 'string' ? { external_id: params } : params) as TradeFeedNotificationsParams;
+    for await (const page of this.pages((cursor) => this.tradeFeedNotificationsRaw({ ...p, cursor }), { cursor: p?.cursor })) {
+      yield* page.data;
+    }
+  }
+
   /**
    * Offset pagination (competitions): the server reports `total` but no cursor
    * (`has_more` is always false there), so the next offset is computed here.
@@ -1950,6 +2154,22 @@ export class CabalSpyID {
       throw new AuthenticationError('The copy trading stream needs an API key.', { status: 401, code: 'missing_api_key' });
     }
     return new CopyTradingStream(this.copyTradingStreamUrl, this.apiKey, { instance: this.instance, ...options });
+  }
+
+  /**
+   * Every new trade and thesis that concerns your users, live (at most 5
+   * connections per key). `data` is the item plus `recipients` and
+   * `recipients_external`.
+   *
+   *   const tf = csid.tradeFeedStream();
+   *   tf.on('trade_feed.trade', (item) => item.recipients_external.forEach((u) => notify(u, item)));
+   *   await tf.connect();
+   */
+  tradeFeedStream(options: TradeFeedStreamOptions = {}): TradeFeedStream {
+    if (!this.apiKey) {
+      throw new AuthenticationError('The Trade Feed stream needs an API key.', { status: 401, code: 'missing_api_key' });
+    }
+    return new TradeFeedStream(this.tradeFeedStreamUrl, this.apiKey, { instance: this.instance, ...options });
   }
 }
 

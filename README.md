@@ -19,7 +19,7 @@ One package, everything you need:
 | `CabalSpyIDAuth` | OpenID Connect for your server: PKCE, code exchange, refresh, revoke, userinfo, ID token verification (ES256 / JWKS) |
 | `cabalspy-id/react` | `<CabalSpyLogin />` button, `<CabalSpyTheses />` widget and `useCabalSpyID()` hook |
 | `ThesisClient` | public token thesis API for your own UI in the browser (your public `clientId` + user access token) with `live()` updates |
-| `CabalSpyID` | Data API client for `https://api-id.cabalspy.xyz/v1`, typed responses, pagination, live trade stream, white-label platform users, trading competitions, callouts (on request) and copy trading |
+| `CabalSpyID` | Data API client for `https://api-id.cabalspy.xyz/v1`, typed responses, pagination, live trade stream, white-label platform users, trading competitions, callouts (on request), the Trade Feed and copy trading |
 | `verifyWebhook` | Standard Webhooks signature verification |
 
 Zero runtime dependencies: crypto runs on WebCrypto. Works in Node 18+, browsers, Deno, Bun and edge runtimes. ESM and CommonJS.
@@ -52,7 +52,7 @@ One codebase, one version line. The focused packages re-export parts of `cabalsp
 | Import | Contents |
 |---|---|
 | `cabalspy-id` | everything |
-| `cabalspy-id/api` | `CabalSpyID` (incl. white-label, competitions, callouts and copy trading), `CabalSpyIDStream`, `CalloutsStream`, `CopyTradingStream`, `CabalSpyIDAuth`, `verifyWebhook`, `isWebhookEvent`, errors and Data API types |
+| `cabalspy-id/api` | `CabalSpyID` (incl. white-label, competitions, callouts, Trade Feed and copy trading), `CabalSpyIDStream`, `CalloutsStream`, `CopyTradingStream`, `TradeFeedStream`, `CabalSpyIDAuth`, `verifyWebhook`, `isWebhookEvent`, errors and Data API types |
 | `cabalspy-id/thesis` | `CabalSpyID` (thesis methods), `ThesisClient`, `ThesisLive`, `ThesesStream`, thesis types |
 | `cabalspy-id/widget` | browser only: `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `setThesisSignInHandler`, `startLogin`, `onWidgetEvents`, `loadCabalSpyIDWidget` |
 | `cabalspy-id/react` (= `cabalspy-id/widget/react`) | `<CabalSpyLogin />`, `<CabalSpyTheses />`, `useCabalSpyID()` |
@@ -259,15 +259,15 @@ try {
 
 | Class | Status | Codes |
 |---|---|---|
-| `BadRequestError` | 400 | `missing_parameter`, `invalid_parameter`, `instance_required` |
+| `BadRequestError` | 400 | `missing_parameter`, `invalid_parameter`, `instance_required`; Trade Feed: `cannot_add_self` |
 | `AuthenticationError` | 401 | `missing_api_key` |
-| `PermissionError` | 403 | `invalid_api_key`, `product_not_enabled`, `no_instance`, `scope_not_allowed` |
+| `PermissionError` | 403 | `invalid_api_key`, `product_not_enabled`, `no_instance`, `scope_not_allowed`; Trade Feed and copy trading: `consent_required`, `trading_private` |
 | `PlanUserLimitError` | 403 | `plan_user_limit` |
 | `FeatureNotEnabledError` | 403 | `feature_not_enabled` (an extra such as callouts is not switched on) |
-| `NotFoundError` | 404 | `profile_not_found`, `wallet_not_found`, `instance_not_found`, `platform_user_not_found`, …; copy trading: `trader_not_found`, `not_in_trade_feed`, `not_found` |
-| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, …; callouts: `already_called`; copy trading: `copy_managed_elsewhere`, `already_reported`, `trade_feed_full` |
+| `NotFoundError` | 404 | `profile_not_found`, `wallet_not_found`, `instance_not_found`, `platform_user_not_found`, …; copy trading: `trader_not_found`, `not_in_trade_feed`, `not_found`; Trade Feed: `trader_not_found` |
+| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, …; callouts: `already_called`; copy trading: `copy_managed_elsewhere`, `already_reported`, `trade_feed_full`; Trade Feed: `trade_feed_full` |
 | `UnprocessableError` | 422 | `no_price` (callouts) |
-| `RateLimitError` | 429 | `rate_limit_exceeded`, `rate_limited` |
+| `RateLimitError` | 429 | `rate_limit_exceeded`, `rate_limited` (also the Trade Feed's 120 changes per hour; not retried) |
 | `CalloutCooldownError` | 429 | `callout_cooldown` (a `RateLimitError`; not retried) |
 | `ServerError` | 5xx | `internal_error`, `service_unavailable` |
 | `ConnectionError` | – | network failure, timeout |
@@ -436,6 +436,62 @@ const comp = await csid.createCompetition({
 ```
 
 A runnable tour is in [examples/callouts.mjs](examples/callouts.mjs).
+
+## Trade Feed
+
+A user's **Trade Feed** is the traders they follow: every trade and thesis of those traders, alerts filtered per trader, and the [copy settings](#copy-trading). Read and manage it from your backend in the user's name: a person who signed in to your app with the scope `trade_feed` (else `PermissionError` `consent_required`), or one of your platform users, within your plan's user limit. Every method takes the user as an `external_id` string or `{ external_id | csid_id }`; a trader is a handle (with or without @) or a csid_id, or `trader_external_id` for one of your platform users.
+
+```ts
+import { CabalSpyID, ConflictError, PermissionError } from 'cabalspy-id';
+
+const csid = new CabalSpyID();
+
+// Add @MazeCCC to user_1001's Trade Feed: alerts for buys from 0.5 SOL, no sells
+try {
+  const r = await csid.addTradeFeedTrader({ external_id: 'user_1001', trader: '@MazeCCC', min_sol: 0.5, notify_sells: false });
+  console.log(r.created, r.settings.min_native);                      // true on HTTP 201, false when already there
+} catch (err) {
+  if (err instanceof PermissionError) console.log(err.code);         // consent_required, trading_private
+  else if (err instanceof ConflictError) console.log(err.code);      // trade_feed_full: 300 traders
+  else throw err;
+}
+
+for await (const item of csid.iterTradeFeed({ external_id: 'user_1001', filter: 'buys' })) {
+  if (item.type === 'trade') console.log(item.trader.username, item.trade.side, item.trade.symbol, item.trade.label);
+}
+
+const { data: traders, pagination } = await csid.tradeFeedTradersRaw('user_1001');  // pagination.total / .max
+await csid.removeTradeFeedTrader({ external_id: 'user_1001', trader: 'MazeCCC' });   // also ends copying
+```
+
+| Method | Endpoint |
+|---|---|
+| `tradeFeed(externalId \| { external_id \| csid_id, filter?, limit?, cursor? })` / `tradeFeedRaw()` / `iterTradeFeed()` | `GET /v1/trade-feed` |
+| `tradeFeedTraders(externalId \| { external_id \| csid_id, limit?, cursor? })` / `tradeFeedTradersRaw()` / `iterTradeFeedTraders()` | `GET /v1/trade-feed/traders` |
+| `addTradeFeedTrader({ external_id \| csid_id, trader \| trader_external_id, notify_buys?, notify_sells?, notify_theses?, min_sol?, min_bnb?, min_eth?, muted? })` | `POST /v1/trade-feed/traders` |
+| `removeTradeFeedTrader({ external_id \| csid_id, trader \| trader_external_id })` | `POST /v1/trade-feed/traders/delete` |
+| `tradeFeedNotifications(externalId \| { external_id \| csid_id, limit?, cursor? })` / `tradeFeedNotificationsRaw()` / `iterTradeFeedNotifications()` | `GET /v1/trade-feed/notifications` |
+| `tradeFeedStream()` | `WSS /v1/trade-feed/stream` |
+
+**The feed** (`TradeFeedItem`, newest first; `filter` `all`, `buys`, `sells` or `theses`; `limit` 1-100, default 30): trade items (`type: 'trade'`: `trader`, `trade` with `side`, `label` (`new`, `add`, `partial`, `close`, `sell`), `sold_percent`, `amount_native` in `currency`, `amount_usd`, `price_usd`, `pnl_usd` / `pnl_percent` for sells with a known entry, `wallet`, `tx_signature` and explorer links) and thesis items (`type: 'thesis'`, `id` `h` + the thesis id). An item's `id` is the same in the feed, the webhook, the stream and the notifications. Traders who keep their trading private are left out.
+
+**Traders** (`TradeFeedTrader`, most recently added first; `limit` 1-300, default 100): `trader`, `trading_public`, `added_at`, `in_trade_feeds` and `settings` (`notify_buys`, `notify_sells`, `notify_theses`, `min_native` `{ SOL, BNB, ETH }`, `muted`, and `copy`, the `CopySettings`). `addTradeFeedTrader` uses the user's default alert settings unless you pass others; for a trader already there it updates what you pass. `min_*` are 0 to 1,000,000 (0 = every trade).
+
+**Notifications** (`TradeFeedNotification`, `limit` 1-100, default 50): every alert that passed the user's filters, with `id`, `event` (`trade_feed.trade` / `trade_feed.thesis`), a ready-made `text`, `created_at` and the item as `data`. Useful as an inbox when you do not use webhooks.
+
+**Errors.** `BadRequestError` `cannot_add_self`; `PermissionError` `consent_required`, `trading_private`; `PlanUserLimitError` `plan_user_limit` (an `anon_` id); `NotFoundError` `trader_not_found`, `platform_user_not_found`; `ConflictError` `trade_feed_full` (300 traders); `RateLimitError` `rate_limited` (more than 120 changes of a user's Trade Feed in an hour; not retried).
+
+**Stream and webhooks.** `tradeFeedStream()` (at most 5 connections per key) emits `trade_feed.trade` and `trade_feed.thesis` once per event (not per user): the item plus `recipients` (csid_ids of your users whose filters let it through) and `recipients_external` (your own ids of those who are platform users), typed as `TradeFeedTradeEvent` / `TradeFeedThesisEvent`. It reconnects like the other streams and works with `for await (const { event, id, data } of stream)` (`id` is the event id). Events made while disconnected are not replayed: read the notifications or the feed to catch up. The webhooks `trade_feed.trade` / `trade_feed.thesis` carry the same `data` and are typed in `WebhookEventDataMap`.
+
+```ts
+const tf = csid.tradeFeedStream();
+tf.on('trade_feed.trade', (item) => {
+  for (const user of item.recipients_external) notify(user, `${item.trader.username} ${item.trade.side} ${item.trade.symbol}`);
+});
+await tf.connect();
+```
+
+A runnable tour is in [examples/trade-feed.mjs](examples/trade-feed.mjs).
 
 ## Copy trading
 
@@ -647,7 +703,7 @@ const stream = csid.stream({ WebSocketImpl: WebSocket });
 
 ## Webhooks
 
-Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created`, `thesis.reply`, `thesis.reaction` — only for users within the plan's limit. White-label: `platform_user.created`, `platform_user.claimed`, `platform_user.x_connected`, `wallet.added`, `verification.expired`, `competition.started`, `competition.updated`, `competition.standings`, `competition.ended` (see [White-label](#white-label-platform-users)). Callouts: `callout.created`, `callout.milestone`, `callout.scored`, `callout.final`. Copy trading: `copy_trade.instruction` (one per user and copied trade; see [Copy trading](#copy-trading)).
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created`, `thesis.reply`, `thesis.reaction` — only for users within the plan's limit. White-label: `platform_user.created`, `platform_user.claimed`, `platform_user.x_connected`, `wallet.added`, `verification.expired`, `competition.started`, `competition.updated`, `competition.standings`, `competition.ended` (see [White-label](#white-label-platform-users)). Callouts: `callout.created`, `callout.milestone`, `callout.scored`, `callout.final`. Copy trading: `copy_trade.instruction` (one per user and copied trade; see [Copy trading](#copy-trading)). Trade Feed: `trade_feed.trade`, `trade_feed.thesis` (one per trade or thesis, with `recipients` and `recipients_external`; see [Trade Feed](#trade-feed)).
 
 ```ts
 import { verifyWebhook } from 'cabalspy-id';
@@ -673,6 +729,7 @@ new CabalSpyID({
   streamUrl: 'wss://api-id.cabalspy.xyz/v1/stream',
   calloutsStreamUrl: 'wss://api-id.cabalspy.xyz/v1/callouts/stream',
   copyTradingStreamUrl: 'wss://api-id.cabalspy.xyz/v1/copy-trading/stream',
+  tradeFeedStreamUrl: 'wss://api-id.cabalspy.xyz/v1/trade-feed/stream',
   timeout: 30_000,
   maxRetries: 2,
   headers: {},

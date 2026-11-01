@@ -2,8 +2,8 @@
  * `cabalspy-id/api` — the SocialFi API: Data API client (users, profiles,
  * verified wallets, trading stats, leaderboards), white-label platform users and
  * trading and callout competitions, callouts (an extra on request), copy
- * trading, the live trade, callouts and copy trading streams, Login with
- * CabalSpy ID (OpenID Connect) and webhook verification.
+ * trading, the Trade Feed, the live trade, callouts, copy trading and Trade
+ * Feed streams, Login with CabalSpy ID (OpenID Connect) and webhook verification.
  *
  *   import { CabalSpyID, CabalSpyIDAuth, verifyWebhook } from 'cabalspy-id/api';
  *
@@ -17,6 +17,7 @@ export {
   DEFAULT_STREAM_URL,
   DEFAULT_CALLOUTS_STREAM_URL,
   DEFAULT_COPY_TRADING_STREAM_URL,
+  DEFAULT_TRADE_FEED_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -59,6 +60,12 @@ export {
   type UpdateCopyTradingSettingsParams,
   type CopyInstructionsParams,
   type ReportCopyInstructionParams,
+  type TradeFeedParams,
+  type TradeFeedTradersParams,
+  type TradeFeedNotificationsParams,
+  type TradeFeedTraderSettings,
+  type AddTradeFeedTraderParams,
+  type RemoveTradeFeedTraderParams,
 } from '../client';
 
 export {
@@ -92,6 +99,16 @@ export {
   type CopyTradingEventName,
   type CopyTradingStreamEvent,
 } from '../copyTradingStream';
+
+export {
+  TradeFeedStream,
+  TRADE_FEED_EVENT_NAMES,
+  type TradeFeedStreamOptions,
+  type TradeFeedReadyEvent,
+  type TradeFeedStreamEventMap,
+  type TradeFeedEventName,
+  type TradeFeedStreamEvent,
+} from '../tradeFeedStream';
 
 export {
   CabalSpyIDAuth,
@@ -189,6 +206,8 @@ export {
   type CalloutScoredData,
   type CalloutFinalData,
   type CopyTradeInstructionData,
+  type TradeFeedTradeData,
+  type TradeFeedThesisData,
   PLATFORM_IMPORT_MAX,
   PLATFORM_MAX_WALLETS_PER_REQUEST,
   WALLET_TRUST,
@@ -306,4 +325,26 @@ export {
   type CopyInstructionBase,
   type CopyInstruction,
   type CopyInstructionEvent,
+  TRADE_FEED_FILTERS,
+  TRADE_LABELS,
+  MAX_TRADE_FEED_TRADERS,
+  TRADE_FEED_CHANGES_PER_HOUR,
+  TRADE_FEED_MAX_MIN_NATIVE,
+  type TradeFeedFilter,
+  type TradeLabel,
+  type TradeFeedTrade,
+  type TradeFeedThesis,
+  type TradeFeedLinks,
+  type TradeFeedTradeItem,
+  type TradeFeedThesisItem,
+  type TradeFeedItem,
+  type TradeFeedSettings,
+  type TradeFeedTrader,
+  type TradeFeedTraderResult,
+  type TradeFeedRemoveResult,
+  type TradeFeedNotification,
+  type TradeFeedRecipients,
+  type TradeFeedTradeEvent,
+  type TradeFeedThesisEvent,
+  type TradeFeedEvent,
 } from '../types';
