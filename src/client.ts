@@ -23,6 +23,7 @@ import {
 import { CabalSpyIDStream, type StreamOptions } from './stream';
 import { ThesesStream, type ThesesStreamOptions } from './thesesStream';
 import { CalloutsStream, type CalloutsStreamOptions } from './calloutsStream';
+import { CopyTradingStream, type CopyTradingStreamOptions } from './copyTradingStream';
 import {
   type ApiResponse,
   CALLOUT_COMPETITION_METRICS,
@@ -41,10 +42,20 @@ import {
   COMPETITION_KINDS,
   COMPETITION_METRICS,
   COMPETITION_STATUSES,
+  COPY_INSTRUCTION_STATUSES,
+  COPY_MODES,
+  COPY_REPORT_STATUSES,
+  COPY_SIDES,
   type Chain,
   type Competition,
   type CompetitionEnrollment,
   type CompetitionJoinResult,
+  type CopyInstruction,
+  type CopyInstructionStatus,
+  type CopyMode,
+  type CopyReportStatus,
+  type CopySides,
+  type CopyTradingSetting,
   type CompetitionLeaveResult,
   type CompetitionParticipant,
   type CompetitionStanding,
@@ -119,6 +130,7 @@ export const DEFAULT_BASE_URL = 'https://api-id.cabalspy.xyz/v1';
 export const DEFAULT_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/stream';
 export const DEFAULT_THESES_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/theses/stream';
 export const DEFAULT_CALLOUTS_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/callouts/stream';
+export const DEFAULT_COPY_TRADING_STREAM_URL = 'wss://api-id.cabalspy.xyz/v1/copy-trading/stream';
 
 export interface CabalSpyIDOptions {
   /**
@@ -139,6 +151,8 @@ export interface CabalSpyIDOptions {
   thesesStreamUrl?: string;
   /** Callouts stream URL. Default: wss://api-id.cabalspy.xyz/v1/callouts/stream */
   calloutsStreamUrl?: string;
+  /** Copy trading stream URL. Default: wss://api-id.cabalspy.xyz/v1/copy-trading/stream */
+  copyTradingStreamUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30_000 */
   timeout?: number;
   /** Retries on 429, 5xx and network errors. Default: 2 */
@@ -536,6 +550,49 @@ export interface CalloutLeaderboardParams {
   cursor?: string;
 }
 
+// -- copy trading ------------------------------------------------------------
+
+/** The copied trader: a CabalSpy ID handle or csid_id, or one of your platform users. */
+export type CopyTraderRef = { trader: string; trader_external_id?: never } | { trader_external_id: string; trader?: never };
+
+/** `GET /v1/copy-trading/settings`: every trader of the user, or one with `trader` / `trader_external_id`. */
+export type CopyTradingSettingsParams = PlatformUserRef & ({ trader?: string; trader_external_id?: never } | { trader_external_id?: string; trader?: never });
+
+/** Only the settings you pass change; the trader is added to the user's Trade Feed if needed. */
+export type UpdateCopyTradingSettingsParams = PlatformUserRef &
+  CopyTraderRef & {
+    enabled?: boolean;
+    mode?: CopyMode;
+    /** mode fixed_usd: USD per copied buy, above 0 and at most 1,000,000. */
+    amount_usd?: number;
+    /** mode percent: percent of the trader's buy, above 0 and at most 1000. */
+    percent?: number;
+    /** Cap per copied buy in USD (at most 1,000,000); null removes it. */
+    max_usd?: number | null;
+    sides?: CopySides;
+    /** Price limit, 1-5000 basis points. Default: 300 */
+    slippage_bps?: number;
+  };
+
+/** Newest first; one user's with `external_id` / `csid_id`. */
+export type CopyInstructionsParams = {
+  status?: CopyInstructionStatus;
+  /** 1-100. Default: 50 */
+  limit?: number;
+  cursor?: string;
+} & ({ external_id?: string; csid_id?: never } | { csid_id?: string; external_id?: never });
+
+export interface ReportCopyInstructionParams {
+  id: string;
+  status: CopyReportStatus;
+  /** The transaction signature or hash (10-200 characters). */
+  tx_signature?: string;
+  /** What was actually spent, in USD. */
+  executed_amount_usd?: number;
+  /** Up to 300 characters, e.g. why it failed or was skipped. */
+  note?: string;
+}
+
 function buildQuery(params: Query): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -632,6 +689,29 @@ function competitionFields(p: Record<string, unknown>, create: boolean): Record<
   return out;
 }
 
+function copyTrader(p: { trader?: string; trader_external_id?: string }, required: boolean): Record<string, string> {
+  if (p.trader && p.trader_external_id) {
+    throw new BadRequestError('Pass at most one of: trader, trader_external_id.', { code: 'invalid_parameter', parameter: 'trader|trader_external_id' });
+  }
+  if (required && !p.trader && !p.trader_external_id) {
+    throw new BadRequestError('Pass one of: trader, trader_external_id.', { code: 'missing_parameter', parameter: 'trader' });
+  }
+  if (p.trader) return { trader: p.trader };
+  return p.trader_external_id ? { trader_external_id: p.trader_external_id } : {};
+}
+
+function assertNumber(v: unknown, parameter: string, low: number, high: number, integer = false): void {
+  if (v === undefined) return;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= low || v > high || (integer && !Number.isInteger(v))) {
+    throw new BadRequestError(`${parameter} must be ${integer ? 'a whole number' : 'a number'} above ${low} and at most ${high}.`, {
+      code: 'invalid_parameter',
+      parameter,
+    });
+  }
+}
+
+const COPY_SETTING_FIELDS = ['enabled', 'mode', 'amount_usd', 'percent', 'max_usd', 'sides', 'slippage_bps'] as const;
+
 function assertHitX(v: unknown): void {
   if (v === undefined) return;
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 1 || v > 1000) {
@@ -667,6 +747,7 @@ export class CabalSpyID {
   readonly streamUrl: string;
   readonly thesesStreamUrl: string;
   readonly calloutsStreamUrl: string;
+  readonly copyTradingStreamUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
   readonly instance?: string;
@@ -685,6 +766,7 @@ export class CabalSpyID {
     this.streamUrl = (options.streamUrl ?? (env('CABALSPY_ID_STREAM_URL') || DEFAULT_STREAM_URL)).replace(/\/+$/, '');
     this.thesesStreamUrl = (options.thesesStreamUrl ?? DEFAULT_THESES_STREAM_URL).replace(/\/+$/, '');
     this.calloutsStreamUrl = (options.calloutsStreamUrl ?? DEFAULT_CALLOUTS_STREAM_URL).replace(/\/+$/, '');
+    this.copyTradingStreamUrl = (options.copyTradingStreamUrl ?? DEFAULT_COPY_TRADING_STREAM_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.extraHeaders = options.headers ?? {};
@@ -1678,6 +1760,118 @@ export class CabalSpyID {
     return this.post<CalloutSettings>('/callouts/settings', { ...changes });
   }
 
+  // ── copy trading ──────────────────────────────────────────────────────────
+  // Every trade of a trader a user copies becomes a ready-to-execute instruction
+  // for that user. CabalSpy ID never holds keys and never executes: your app
+  // executes the instruction with the user's wallet and reports the status back.
+  // Needs the user's consent with the scope `trade_feed` (else PermissionError
+  // `consent_required`). One platform at a time copies a trader for a user.
+
+  /**
+   * GET /v1/copy-trading/settings — the copy settings of every trader in the
+   * user's Trade Feed (copied ones first). NotFoundError `not_in_trade_feed` for
+   * a trader who is not in it, `trader_not_found` for an unknown one.
+   */
+  copyTradingSettings(user: PlatformUserId): Promise<CopyTradingSetting[]>;
+  /** GET /v1/copy-trading/settings — the copy settings for one trader (`trader` or `trader_external_id`). */
+  copyTradingSettings(params: PlatformUserRef & CopyTraderRef): Promise<CopyTradingSetting>;
+  async copyTradingSettings(params: PlatformUserId | CopyTradingSettingsParams): Promise<CopyTradingSetting[] | CopyTradingSetting> {
+    const p = (typeof params === 'string' ? {} : params) as { trader?: string; trader_external_id?: string };
+    return this.get<CopyTradingSetting[] | CopyTradingSetting>('/copy-trading/settings', {
+      ...userRef(params as PlatformUserId),
+      ...copyTrader(p, false),
+    });
+  }
+
+  /**
+   * POST /v1/copy-trading/settings — changes how a user copies one trader (only
+   * what you pass; `max_usd: null` removes the cap). The trader is added to the
+   * Trade Feed if needed. ConflictError `copy_managed_elsewhere` while another
+   * platform copies this trader for the user.
+   */
+  async updateCopyTradingSettings(params: UpdateCopyTradingSettingsParams): Promise<CopyTradingSetting> {
+    const [ref, rest] = splitRef(params);
+    const target = copyTrader(rest as { trader?: string; trader_external_id?: string }, true);
+    const changes: Record<string, unknown> = {};
+    for (const k of COPY_SETTING_FIELDS) if (rest[k] !== undefined) changes[k] = rest[k];
+    assertOneOf(changes.mode as string | undefined, COPY_MODES, 'mode');
+    assertOneOf(changes.sides as string | undefined, COPY_SIDES, 'sides');
+    if (changes.enabled !== undefined && typeof changes.enabled !== 'boolean') {
+      throw new BadRequestError('enabled must be true or false.', { code: 'invalid_parameter', parameter: 'enabled' });
+    }
+    assertNumber(changes.amount_usd, 'amount_usd', 0, 1_000_000);
+    assertNumber(changes.percent, 'percent', 0, 1000);
+    if (changes.max_usd !== null) assertNumber(changes.max_usd, 'max_usd', 0, 1_000_000);
+    assertNumber(changes.slippage_bps, 'slippage_bps', 0, 5000, true);
+    if (Object.keys(changes).length === 0) {
+      throw new BadRequestError(`Pass at least one of: ${COPY_SETTING_FIELDS.join(', ')}.`, { code: 'missing_parameter', parameter: 'enabled' });
+    }
+    return this.post<CopyTradingSetting>('/copy-trading/settings', { ...ref, ...target, ...changes });
+  }
+
+  /** GET /v1/copy-trading/instructions — your instance's copy instructions, newest first. */
+  async copyInstructions(params: CopyInstructionsParams = {}): Promise<CopyInstruction[]> {
+    return (await this.copyInstructionsRaw(params)).data;
+  }
+
+  async copyInstructionsRaw(params: CopyInstructionsParams = {}): Promise<Envelope<CopyInstruction[]>> {
+    const p = params as CopyInstructionsParams & { external_id?: string; csid_id?: string };
+    if (p.external_id && p.csid_id) {
+      throw new BadRequestError('Pass at most one of: external_id, csid_id.', { code: 'invalid_parameter', parameter: 'external_id|csid_id' });
+    }
+    assertOneOf(p.status, COPY_INSTRUCTION_STATUSES, 'status');
+    if (p.limit !== undefined && (!Number.isInteger(p.limit) || p.limit < 1 || p.limit > 100)) {
+      throw new BadRequestError('limit must be a whole number from 1 to 100.', { code: 'invalid_parameter', parameter: 'limit' });
+    }
+    return this.getRaw<CopyInstruction[]>('/copy-trading/instructions', {
+      external_id: p.external_id,
+      csid_id: p.csid_id,
+      status: p.status,
+      limit: p.limit,
+      cursor: p.cursor,
+    });
+  }
+
+  /** Iterates over every matching copy instruction, newest first, following `next_cursor`. */
+  async *iterCopyInstructions(params: CopyInstructionsParams = {}): AsyncGenerator<CopyInstruction, void, void> {
+    for await (const page of this.pages((cursor) => this.copyInstructionsRaw({ ...params, cursor }), { cursor: params.cursor })) {
+      yield* page.data;
+    }
+  }
+
+  /** GET /v1/copy-trading/instructions/item — one instruction. */
+  async copyInstruction(id: string): Promise<CopyInstruction> {
+    assertRequired(id, 'id');
+    return this.get<CopyInstruction>('/copy-trading/instructions/item', { id });
+  }
+
+  /**
+   * POST /v1/copy-trading/instructions/status — what happened: `executed` (with
+   * `tx_signature`, `executed_amount_usd`), `failed` or `skipped`. Final: the same
+   * report twice is fine, another one is a ConflictError `already_reported`. A
+   * copied buy reported failed or skipped means later sells of that token are not sent.
+   */
+  async reportCopyInstruction(params: ReportCopyInstructionParams): Promise<CopyInstruction> {
+    assertRequired(params?.id, 'id');
+    assertRequired(params.status, 'status');
+    assertOneOf(params.status, COPY_REPORT_STATUSES, 'status');
+    const sig = params.tx_signature;
+    if (sig !== undefined && (typeof sig !== 'string' || sig.length < 10 || sig.length > 200)) {
+      throw new BadRequestError('tx_signature must be a transaction signature or hash (10-200 characters).', {
+        code: 'invalid_parameter',
+        parameter: 'tx_signature',
+      });
+    }
+    assertNumber(params.executed_amount_usd, 'executed_amount_usd', 0, 10_000_000);
+    return this.post<CopyInstruction>('/copy-trading/instructions/status', {
+      id: params.id,
+      status: params.status,
+      ...(sig !== undefined ? { tx_signature: sig } : {}),
+      ...(params.executed_amount_usd !== undefined ? { executed_amount_usd: params.executed_amount_usd } : {}),
+      ...(params.note !== undefined ? { note: params.note } : {}),
+    });
+  }
+
   /**
    * Offset pagination (competitions): the server reports `total` but no cursor
    * (`has_more` is always false there), so the next offset is computed here.
@@ -1742,6 +1936,20 @@ export class CabalSpyID {
       throw new AuthenticationError('The callouts stream needs an API key.', { status: 401, code: 'missing_api_key' });
     }
     return new CalloutsStream(this.calloutsStreamUrl, this.apiKey, { instance: this.instance, ...options });
+  }
+
+  /**
+   * Every new copy instruction of your instance, live (at most 5 connections per key).
+   *
+   *   const cs = csid.copyTradingStream();
+   *   cs.on('copy_trade.instruction', (i) => execute(i));
+   *   await cs.connect();
+   */
+  copyTradingStream(options: CopyTradingStreamOptions = {}): CopyTradingStream {
+    if (!this.apiKey) {
+      throw new AuthenticationError('The copy trading stream needs an API key.', { status: 401, code: 'missing_api_key' });
+    }
+    return new CopyTradingStream(this.copyTradingStreamUrl, this.apiKey, { instance: this.instance, ...options });
   }
 }
 

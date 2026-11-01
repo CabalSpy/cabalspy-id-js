@@ -9,6 +9,7 @@
  *                     and trading competitions between them (createCompetition, …)
  * - Callouts:         an extra on request: createCallout, calloutLeaderboard, calloutsStream(),
  *                     callout competitions (createCompetition({ kind: 'callouts', … }))
+ * - Copy trading:     updateCopyTradingSettings, copyInstructions, reportCopyInstruction, copyTradingStream()
  * - cabalspy-id/react: <CabalSpyLogin />, <CabalSpyTheses /> and useCabalSpyID()
  *
  * Focused entry points: cabalspy-id/api, cabalspy-id/thesis, cabalspy-id/widget (browser).
@@ -22,6 +23,7 @@ export {
   DEFAULT_STREAM_URL,
   DEFAULT_THESES_STREAM_URL,
   DEFAULT_CALLOUTS_STREAM_URL,
+  DEFAULT_COPY_TRADING_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -71,6 +73,11 @@ export {
   type CalloutsParams,
   type CalloutStatsParams,
   type CalloutLeaderboardParams,
+  type CopyTraderRef,
+  type CopyTradingSettingsParams,
+  type UpdateCopyTradingSettingsParams,
+  type CopyInstructionsParams,
+  type ReportCopyInstructionParams,
 } from './client';
 
 export {
@@ -120,6 +127,16 @@ export {
   type CalloutEventName,
   type CalloutStreamEvent,
 } from './calloutsStream';
+
+export {
+  CopyTradingStream,
+  COPY_TRADING_EVENT_NAMES,
+  type CopyTradingStreamOptions,
+  type CopyTradingReadyEvent,
+  type CopyTradingStreamEventMap,
+  type CopyTradingEventName,
+  type CopyTradingStreamEvent,
+} from './copyTradingStream';
 
 export {
   ThesisClient,

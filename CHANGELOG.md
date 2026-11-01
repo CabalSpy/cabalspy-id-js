@@ -4,6 +4,37 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-11-01
+
+Copy trading: every trade of a trader one of your users copies becomes a ready-to-execute
+instruction for that user, sized by their copy settings. CabalSpy ID never holds keys and never
+executes; your app executes the instruction with the user's wallet and reports the status back.
+
+### Added
+
+- Copy trading on `CabalSpyID`: `copyTradingSettings` (an external_id or `{ external_id | csid_id }`
+  for every trader; with `trader` / `trader_external_id` for one), `updateCopyTradingSettings`
+  (`enabled`, `mode`, `amount_usd`, `percent`, `max_usd` (`null` removes the cap), `sides`,
+  `slippage_bps`; only what you pass changes), `copyInstructions` / `copyInstructionsRaw` /
+  `iterCopyInstructions` (`external_id` / `csid_id`, `status` incl. `expired`, `limit` 1-100),
+  `copyInstruction`, `reportCopyInstruction` (`executed` / `failed` / `skipped`, `tx_signature`,
+  `executed_amount_usd`, `note`). Values are checked before sending, like the server does.
+- `CopyTradingStream` and `csid.copyTradingStream()` for `/v1/copy-trading/stream`:
+  `copy_trade.instruction`, reconnects, heartbeat watchdog and `for await` (`{ event, id, data }`).
+  New option `copyTradingStreamUrl`, constant `DEFAULT_COPY_TRADING_STREAM_URL`.
+- Types: `CopyInstruction`, `CopyInstructionBase`, `CopyInstructionEvent` (webhook / stream, with
+  `external_id`), `CopyAction`, `CopySourceTrade`, `CopyTrader`, `CopySettings`,
+  `CopyTradingSetting`, `CopyTradingStreamEvent`; params `CopyTradingSettingsParams`,
+  `UpdateCopyTradingSettingsParams`, `CopyInstructionsParams`, `ReportCopyInstructionParams`,
+  `CopyTraderRef`; constants `COPY_MODES`, `COPY_SIDES`, `COPY_INSTRUCTION_STATUSES`,
+  `COPY_REPORT_STATUSES`, `COPY_INSTRUCTION_TTL_SECONDS`, `COPY_MIN_USD`,
+  `COPY_DEFAULT_SLIPPAGE_BPS`, `COPY_TRADING_EVENT_NAMES`.
+- Typed webhook `copy_trade.instruction` (`CopyTradeInstructionData`) in `WebhookEventDataMap`.
+- Error codes on the existing classes: `copy_managed_elsewhere`, `already_reported`,
+  `trade_feed_full` (`ConflictError`), `not_in_trade_feed`, `trader_not_found`, `not_found`
+  (`NotFoundError`), `consent_required`, `trading_private` (`PermissionError`).
+- README section "Copy trading" and `examples/copy-trading.mjs`.
+
 ## [0.7.0] - 2026-10-31
 
 Callouts, an extra that CabalSpy switches on per instance on request: a user calls a
@@ -235,6 +266,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.8.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.1...v0.5.2

@@ -19,7 +19,7 @@ One package, everything you need:
 | `CabalSpyIDAuth` | OpenID Connect for your server: PKCE, code exchange, refresh, revoke, userinfo, ID token verification (ES256 / JWKS) |
 | `cabalspy-id/react` | `<CabalSpyLogin />` button, `<CabalSpyTheses />` widget and `useCabalSpyID()` hook |
 | `ThesisClient` | public token thesis API for your own UI in the browser (your public `clientId` + user access token) with `live()` updates |
-| `CabalSpyID` | Data API client for `https://api-id.cabalspy.xyz/v1`, typed responses, pagination, live trade stream, white-label platform users and trading competitions |
+| `CabalSpyID` | Data API client for `https://api-id.cabalspy.xyz/v1`, typed responses, pagination, live trade stream, white-label platform users, trading competitions, callouts (on request) and copy trading |
 | `verifyWebhook` | Standard Webhooks signature verification |
 
 Zero runtime dependencies: crypto runs on WebCrypto. Works in Node 18+, browsers, Deno, Bun and edge runtimes. ESM and CommonJS.
@@ -30,7 +30,7 @@ Everything for developers — instance (client_id), client secrets, redirect URI
 
 - **Social trading feed** — every trade of your users live, with their X profile and PnL
 - **Leaderboards** — rank your users by PnL, volume, win rate or trades
-- **Copy trading** — follow verified wallets of real, identified traders
+- **Copy trading** — follow verified wallets of real, identified traders; every trade of a copied trader arrives as a ready-to-execute instruction sized by the user's settings
 - **Token theses** — holders-only opinions on a token with the author's real position, as a SocialFi widget or your own UI
 - **Trader profiles** — X profile, verified wallets, holdings, PnL calendar
 - **KOL badges** — reviewed badges for influential traders, shown wherever they sign in
@@ -52,7 +52,7 @@ One codebase, one version line. The focused packages re-export parts of `cabalsp
 | Import | Contents |
 |---|---|
 | `cabalspy-id` | everything |
-| `cabalspy-id/api` | `CabalSpyID` (incl. white-label and competitions), `CabalSpyIDStream`, `CabalSpyIDAuth`, `verifyWebhook`, `isWebhookEvent`, errors and Data API types |
+| `cabalspy-id/api` | `CabalSpyID` (incl. white-label, competitions, callouts and copy trading), `CabalSpyIDStream`, `CalloutsStream`, `CopyTradingStream`, `CabalSpyIDAuth`, `verifyWebhook`, `isWebhookEvent`, errors and Data API types |
 | `cabalspy-id/thesis` | `CabalSpyID` (thesis methods), `ThesisClient`, `ThesisLive`, `ThesesStream`, thesis types |
 | `cabalspy-id/widget` | browser only: `mountLoginButton`, `mountTheses`, `setThesisAccessToken`, `setThesisSignInHandler`, `startLogin`, `onWidgetEvents`, `loadCabalSpyIDWidget` |
 | `cabalspy-id/react` (= `cabalspy-id/widget/react`) | `<CabalSpyLogin />`, `<CabalSpyTheses />`, `useCabalSpyID()` |
@@ -264,8 +264,8 @@ try {
 | `PermissionError` | 403 | `invalid_api_key`, `product_not_enabled`, `no_instance`, `scope_not_allowed` |
 | `PlanUserLimitError` | 403 | `plan_user_limit` |
 | `FeatureNotEnabledError` | 403 | `feature_not_enabled` (an extra such as callouts is not switched on) |
-| `NotFoundError` | 404 | `profile_not_found`, `wallet_not_found`, `instance_not_found`, `platform_user_not_found`, … |
-| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, …; callouts: `already_called` |
+| `NotFoundError` | 404 | `profile_not_found`, `wallet_not_found`, `instance_not_found`, `platform_user_not_found`, …; copy trading: `trader_not_found`, `not_in_trade_feed`, `not_found` |
+| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, …; callouts: `already_called`; copy trading: `copy_managed_elsewhere`, `already_reported`, `trade_feed_full` |
 | `UnprocessableError` | 422 | `no_price` (callouts) |
 | `RateLimitError` | 429 | `rate_limit_exceeded`, `rate_limited` |
 | `CalloutCooldownError` | 429 | `callout_cooldown` (a `RateLimitError`; not retried) |
@@ -437,6 +437,57 @@ const comp = await csid.createCompetition({
 
 A runnable tour is in [examples/callouts.mjs](examples/callouts.mjs).
 
+## Copy trading
+
+Every trade of a trader one of your users copies becomes a **ready-to-execute instruction** for that user, sized by their copy settings for that trader. CabalSpy ID never holds keys and never executes: your app executes the instruction with the user's wallet and reports what happened. It needs the user's consent with the scope `trade_feed` (else `PermissionError` `consent_required`); a copied trader is in the user's Trade Feed.
+
+```ts
+import { CabalSpyID, ConflictError } from 'cabalspy-id';
+
+const csid = new CabalSpyID();
+
+// Copy @ctkol for user_1001: $25 per buy, at most $20, buys and sells, 1.5 % price limit
+try {
+  await csid.updateCopyTradingSettings({
+    external_id: 'user_1001', trader: 'ctkol',
+    enabled: true, mode: 'fixed_usd', amount_usd: 25, max_usd: 20, sides: 'both', slippage_bps: 150,
+  });
+} catch (err) {
+  if (err instanceof ConflictError) console.log(err.code); // copy_managed_elsewhere: another platform copies this trader
+}
+
+const settings = await csid.copyTradingSettings('user_1001');                    // every trader in the Trade Feed
+const one = await csid.copyTradingSettings({ external_id: 'user_1001', trader: 'ctkol' });
+
+const live = csid.copyTradingStream();                                            // or the webhook copy_trade.instruction
+live.on('copy_trade.instruction', async (i) => {
+  const sig = await execute(i.external_id ?? i.csid_id, i.action);               // your swap, before i.expires_at
+  await csid.reportCopyInstruction(sig
+    ? { id: i.id, status: 'executed', tx_signature: sig, executed_amount_usd: i.action.amount_usd ?? undefined }
+    : { id: i.id, status: 'failed', note: 'insufficient balance' });
+});
+await live.connect();
+```
+
+| Method | Endpoint |
+|---|---|
+| `copyTradingSettings(externalId \| { external_id \| csid_id, trader? \| trader_external_id? })` | `GET /v1/copy-trading/settings` (a list, or one setting with a trader) |
+| `updateCopyTradingSettings({ external_id \| csid_id, trader \| trader_external_id, enabled?, mode?, amount_usd?, percent?, max_usd?, sides?, slippage_bps? })` | `POST /v1/copy-trading/settings` |
+| `copyInstructions({ external_id? \| csid_id?, status?, limit?, cursor? })` / `copyInstructionsRaw()` / `iterCopyInstructions()` | `GET /v1/copy-trading/instructions` (newest first) |
+| `copyInstruction(id)` | `GET /v1/copy-trading/instructions/item` |
+| `reportCopyInstruction({ id, status, tx_signature?, executed_amount_usd?, note? })` | `POST /v1/copy-trading/instructions/status` |
+| `copyTradingStream()` | `WSS /v1/copy-trading/stream` |
+
+**Settings** (`CopySettings`, per user and trader): `enabled`, `mode` (`fixed_usd`: every buy is `amount_usd`, default 50; `percent`: `percent` % of the trader's buy in USD, default 100, at most 1000), `max_usd` (cap per buy; `null` removes it), `sides` (`buys` or `both`, default `both`), `slippage_bps` (1-5000, default 300). Only what you pass changes; the trader (handle or csid_id, or `trader_external_id` for one of your platform users) is added to the Trade Feed if needed (HTTP 201). Copying a trader is switched on by **one platform at a time**: only its apps get the instructions, so a user on two platforms is never copied twice (`managed_by_other_platform`, `copy_managed_elsewhere`).
+
+**An instruction** (`CopyInstruction`): `id`, `status`, `created_at`, `expires_at` (120 seconds later), `csid_id`, `trader`, `action` (`blockchain`, `mint`, `symbol`, `side`; buys: `amount_usd`, `amount_native` in `currency` and `max_price_usd`; sells: `sell_percent` of the copied position and `min_price_usd`; `price_usd`, `slippage_bps`), `source_trade` (the trader's trade), `settings` (as they were), `links`, and via REST `tx_signature`, `executed_amount_usd`, `note`, `updated_at`. Buys under $1 are not sent. A sell is only sent after a copied buy of that token that was not reported failed or skipped; a closing sell is `sell_percent` 100. A pending instruction past `expires_at` reads as `expired` (it may still be reported executed).
+
+**Reporting.** `status` is `executed`, `failed` or `skipped` and final: the same report twice is fine, another one is a `ConflictError` `already_reported`. Reports are never retried after a server or network error.
+
+**Stream and webhook.** `copyTradingStream()` (at most 5 connections per key) emits `copy_trade.instruction` with the instruction plus `external_id` (`CopyInstructionEvent`); it reconnects like the other streams and works with `for await (const { id, data } of stream)`. The webhook `copy_trade.instruction` carries the same `data` and is typed in `WebhookEventDataMap` (`isWebhookEvent(event, 'copy_trade.instruction')`).
+
+A runnable tour is in [examples/copy-trading.mjs](examples/copy-trading.mjs).
+
 ## Token theses
 
 A thesis is a short opinion on a token (up to 1000 characters), optionally tagged bull or bear. **Only holders post theses**: one of the author's verified wallets bought the token and still holds it. Every thesis shows the author's real position — what they bought when posting and their live PnL now (or "sold"); authors who keep their trading private show only that they hold. Anyone signed in can reply and react (`like` plus 🔥 🚀 💎 👀 😂 🤝 💀 🐂 🐻). The same theses appear in the widget, through the Data API and on every platform.
@@ -596,7 +647,7 @@ const stream = csid.stream({ WebSocketImpl: WebSocket });
 
 ## Webhooks
 
-Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created`, `thesis.reply`, `thesis.reaction` — only for users within the plan's limit. White-label: `platform_user.created`, `platform_user.claimed`, `platform_user.x_connected`, `wallet.added`, `verification.expired`, `competition.started`, `competition.updated`, `competition.standings`, `competition.ended` (see [White-label](#white-label-platform-users)).
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com) spec (`webhook-id`, `webhook-timestamp`, `webhook-signature`, secret `whsec_...`) and are retried for about 2 days. Events: `wallet.verified`, `wallet.removed`, `profile.updated`, `kol.granted`, `consent.revoked`, `thesis.created`, `thesis.reply`, `thesis.reaction` — only for users within the plan's limit. White-label: `platform_user.created`, `platform_user.claimed`, `platform_user.x_connected`, `wallet.added`, `verification.expired`, `competition.started`, `competition.updated`, `competition.standings`, `competition.ended` (see [White-label](#white-label-platform-users)). Callouts: `callout.created`, `callout.milestone`, `callout.scored`, `callout.final`. Copy trading: `copy_trade.instruction` (one per user and copied trade; see [Copy trading](#copy-trading)).
 
 ```ts
 import { verifyWebhook } from 'cabalspy-id';
@@ -620,6 +671,8 @@ new CabalSpyID({
   instance: undefined,                  // client_id, when the account has several instances
   baseUrl: 'https://api-id.cabalspy.xyz/v1',
   streamUrl: 'wss://api-id.cabalspy.xyz/v1/stream',
+  calloutsStreamUrl: 'wss://api-id.cabalspy.xyz/v1/callouts/stream',
+  copyTradingStreamUrl: 'wss://api-id.cabalspy.xyz/v1/copy-trading/stream',
   timeout: 30_000,
   maxRetries: 2,
   headers: {},

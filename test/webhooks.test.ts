@@ -7,6 +7,7 @@ import {
   type CalloutMilestoneData,
   type CompetitionStandingsData,
   type CompetitionStartedData,
+  type CopyTradeInstructionData,
   WebhookVerificationError,
   isWebhookEvent,
   signWebhook,
@@ -232,6 +233,39 @@ describe('callout webhooks', () => {
     if (isWebhookEvent(event, 'callout.milestone', 'callout.created')) {
       const data: CalloutMilestoneData | CalloutCreatedData = event.data;
       expect(data.callout.id).toBe('co-1');
+    } else {
+      throw new Error('not narrowed');
+    }
+  });
+});
+
+describe('copy trading webhooks', () => {
+  it('narrows copy_trade.instruction to the instruction plus external_id', async () => {
+    const data = {
+      id: 'i-1',
+      type: 'copy_instruction',
+      status: 'pending',
+      created_at: '2026-11-01T12:00:00Z',
+      expires_at: '2026-11-01T12:02:00Z',
+      csid_id: 'f-1',
+      external_id: 'u1',
+      trader: { csid_id: 't-1', username: 'ctkol', name: null, image_url: null, kol: false, profile_url: null },
+      action: { blockchain: 'solana', mint: 'So1', symbol: 'CPT', name: null, logo: null, side: 'sell', amount_usd: null, amount_native: null, currency: 'SOL', sell_percent: 50, price_usd: 0.3, max_price_usd: null, min_price_usd: 0.291, slippage_bps: 300 },
+      source_trade: { blockchain: 'solana', mint: 'So1', side: 'sell', label: 'partial', sold_percent: 50 },
+      settings: { enabled: true, mode: 'percent', amount_usd: 50, percent: 10, max_usd: null, sides: 'both', slippage_bps: 300, updated_at: null },
+      links: { token: null, terminal: null, profile: null },
+    };
+    const payload = JSON.stringify({ id: 'evt_ct', type: 'copy_trade.instruction', created_at: '2026-11-01T12:00:00Z', sandbox: false, data });
+    const headers = { 'webhook-id': 'evt_ct', 'webhook-timestamp': String(now), 'webhook-signature': serverSign(rawKey, 'evt_ct', now, payload) };
+    const event = await verifyTypedWebhook({ payload, headers, secret: SECRET, now });
+    if (event.type !== 'copy_trade.instruction') throw new Error('not narrowed');
+    expect(event.data.action.sell_percent).toBe(50);
+    expect(event.data.external_id).toBe('u1');
+    const plain = await verifyWebhook({ payload, headers, secret: SECRET, now });
+    expect(isWebhookEvent(plain, 'callout.created')).toBe(false);
+    if (isWebhookEvent(plain, 'copy_trade.instruction')) {
+      const d: CopyTradeInstructionData = plain.data;
+      expect(d.action.min_price_usd).toBe(0.291);
     } else {
       throw new Error('not narrowed');
     }
