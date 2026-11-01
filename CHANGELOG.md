@@ -4,6 +4,44 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-11-01
+
+Trade Feed: read and manage your users' Trade Feeds from your backend (the traders they follow,
+every trade and thesis of those traders, alert filters and notifications), and get every new
+trade and thesis for them live, with the users to tell.
+
+### Added
+
+- Trade Feed on `CabalSpyID`, every method in the name of one user (an external_id or
+  `{ external_id | csid_id }`): `tradeFeed` / `tradeFeedRaw` / `iterTradeFeed` (`filter` all /
+  buys / sells / theses, `limit` 1-100), `tradeFeedTraders` / `tradeFeedTradersRaw` /
+  `iterTradeFeedTraders` (`limit` 1-300; pagination `total` and `max`), `addTradeFeedTrader`
+  (`trader` / `trader_external_id`, `notify_buys`, `notify_sells`, `notify_theses`, `min_sol`,
+  `min_bnb`, `min_eth` (0-1,000,000), `muted`; `created` tells 201 from 200),
+  `removeTradeFeedTrader`, `tradeFeedNotifications` / `tradeFeedNotificationsRaw` /
+  `iterTradeFeedNotifications` (`limit` 1-100). Values are checked before sending, like the
+  server does.
+- `TradeFeedStream` and `csid.tradeFeedStream()` for `/v1/trade-feed/stream`: `trade_feed.trade`
+  and `trade_feed.thesis` (the item plus `recipients` and `recipients_external`), reconnects,
+  heartbeat watchdog and `for await` (`{ event, id, data }`, `id` is the event id). New option
+  `tradeFeedStreamUrl`, constant `DEFAULT_TRADE_FEED_STREAM_URL`.
+- Types: `TradeFeedItem` (`TradeFeedTradeItem` | `TradeFeedThesisItem`), `TradeFeedTrade`,
+  `TradeFeedThesis`, `TradeFeedLinks`, `TradeFeedTrader`, `TradeFeedSettings` (with the existing
+  `CopySettings` as `copy`), `TradeFeedTraderResult`, `TradeFeedRemoveResult`,
+  `TradeFeedNotification`, `TradeFeedRecipients`, `TradeFeedEvent` (`TradeFeedTradeEvent` |
+  `TradeFeedThesisEvent`), `TradeFeedStreamEvent`; params `TradeFeedParams`,
+  `TradeFeedTradersParams`, `TradeFeedNotificationsParams`, `TradeFeedTraderSettings`,
+  `AddTradeFeedTraderParams`, `RemoveTradeFeedTraderParams`; constants `TRADE_FEED_FILTERS`,
+  `TRADE_LABELS`, `MAX_TRADE_FEED_TRADERS`, `TRADE_FEED_CHANGES_PER_HOUR`,
+  `TRADE_FEED_MAX_MIN_NATIVE`, `TRADE_FEED_EVENT_NAMES`; `Pagination.max`.
+- Typed webhooks `trade_feed.trade` (`TradeFeedTradeData`) and `trade_feed.thesis`
+  (`TradeFeedThesisData`) in `WebhookEventDataMap`.
+- Error codes on the existing classes: `cannot_add_self` (`BadRequestError`), `trade_feed_full`
+  (`ConflictError`), `trader_not_found`, `platform_user_not_found` (`NotFoundError`),
+  `consent_required`, `trading_private` (`PermissionError`), `plan_user_limit`
+  (`PlanUserLimitError`), `rate_limited` (`RateLimitError`, not retried).
+- README section "Trade Feed" and `examples/trade-feed.mjs`.
+
 ## [0.8.0] - 2026-11-01
 
 Copy trading: every trade of a trader one of your users copies becomes a ready-to-execute
@@ -266,6 +304,7 @@ First release.
   `PlanUserLimitError`, `NotFoundError`, `RateLimitError`, `ServerError`, `ConnectionError`,
   `InvalidResponseError`, `OAuthError`, `TokenVerificationError`, `WebhookVerificationError`.
 
+[0.9.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/CabalSpy/cabalspy-id-js/compare/v0.5.2...v0.6.0

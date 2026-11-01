@@ -68,7 +68,8 @@ export class CabalSpyIDError extends Error {
 
 /**
  * 400 — missing_parameter, invalid_parameter, instance_required; white-label:
- * wallet_required, invalid_address, invalid_return_url, invalid_body
+ * wallet_required, invalid_address, invalid_return_url, invalid_body; Trade Feed:
+ * cannot_add_self (the user tried to add themselves)
  */
 export class BadRequestError extends CabalSpyIDError {}
 /** 401 — missing_api_key; thesis API: client_id_required, invalid_client */
@@ -77,7 +78,8 @@ export class AuthenticationError extends CabalSpyIDError {}
  * 403 — invalid_api_key, product_not_enabled, no_instance, scope_not_allowed;
  * thesis API: origin_not_allowed; white-label: claim_disabled; callouts:
  * kol_only, not_a_holder, invalid_account, posting_paused, consent_required, sandbox_user;
- * copy trading: consent_required (no `trade_feed` scope), trading_private
+ * copy trading and Trade Feed: consent_required (no `trade_feed` scope, or beyond the
+ * plan's user limit), trading_private (the trader keeps their trading private)
  */
 export class PermissionError extends CabalSpyIDError {}
 /**
@@ -99,7 +101,8 @@ export class PlanUserLimitError extends PermissionError {
  * 404 — profile_not_found, wallet_not_found, instance_not_found; white-label:
  * platform_user_not_found, verification_not_found, competition_not_found, invalid_inbound_url;
  * callouts: callout_not_found; copy trading: trader_not_found, not_in_trade_feed,
- * not_found (no such instruction for your instance)
+ * not_found (no such instruction for your instance); Trade Feed: trader_not_found,
+ * platform_user_not_found (unknown external_id or trader_external_id)
  */
 export class NotFoundError extends CabalSpyIDError {}
 /**
@@ -110,13 +113,14 @@ export class NotFoundError extends CabalSpyIDError {}
  * callouts: already_called (the user called this token less than 24 hours ago);
  * copy trading: copy_managed_elsewhere (another platform copies this trader for the
  * user), already_reported (the instruction already has another final status),
- * trade_feed_full.
+ * trade_feed_full; Trade Feed: trade_feed_full (the Trade Feed has 300 traders).
  */
 export class ConflictError extends CabalSpyIDError {}
 /**
  * 429 — rate_limit_exceeded (requests per second); thesis API and white-label:
  * rate_limited (e.g. more than 2,000 new platform users per minute,
- * too_many_open_verifications)
+ * too_many_open_verifications); Trade Feed: rate_limited (more than 120 changes of a
+ * user's Trade Feed in an hour; not retried)
  */
 export class RateLimitError extends CabalSpyIDError {
   /** Seconds until the next request is allowed, taken from Retry-After. */
