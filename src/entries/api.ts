@@ -1,9 +1,9 @@
 /**
  * `cabalspy-id/api` — the SocialFi API: Data API client (users, profiles,
  * verified wallets, trading stats, leaderboards), white-label platform users and
- * trading and callout competitions, callouts (an extra on request), the live
- * trade and callouts streams, Login with CabalSpy ID (OpenID
- * Connect) and webhook verification.
+ * trading and callout competitions, callouts (an extra on request), copy
+ * trading, the live trade, callouts and copy trading streams, Login with
+ * CabalSpy ID (OpenID Connect) and webhook verification.
  *
  *   import { CabalSpyID, CabalSpyIDAuth, verifyWebhook } from 'cabalspy-id/api';
  *
@@ -16,6 +16,7 @@ export {
   DEFAULT_BASE_URL,
   DEFAULT_STREAM_URL,
   DEFAULT_CALLOUTS_STREAM_URL,
+  DEFAULT_COPY_TRADING_STREAM_URL,
   type CabalSpyIDOptions,
   type Envelope,
   type Query,
@@ -53,6 +54,11 @@ export {
   type CalloutsParams,
   type CalloutStatsParams,
   type CalloutLeaderboardParams,
+  type CopyTraderRef,
+  type CopyTradingSettingsParams,
+  type UpdateCopyTradingSettingsParams,
+  type CopyInstructionsParams,
+  type ReportCopyInstructionParams,
 } from '../client';
 
 export {
@@ -76,6 +82,16 @@ export {
   type CalloutEventName,
   type CalloutStreamEvent,
 } from '../calloutsStream';
+
+export {
+  CopyTradingStream,
+  COPY_TRADING_EVENT_NAMES,
+  type CopyTradingStreamOptions,
+  type CopyTradingReadyEvent,
+  type CopyTradingStreamEventMap,
+  type CopyTradingEventName,
+  type CopyTradingStreamEvent,
+} from '../copyTradingStream';
 
 export {
   CabalSpyIDAuth,
@@ -172,6 +188,7 @@ export {
   type CalloutMilestoneData,
   type CalloutScoredData,
   type CalloutFinalData,
+  type CopyTradeInstructionData,
   PLATFORM_IMPORT_MAX,
   PLATFORM_MAX_WALLETS_PER_REQUEST,
   WALLET_TRUST,
@@ -270,4 +287,23 @@ export {
   type CalloutUpdate,
   type CalloutMilestone,
   type CalloutRemoved,
+  COPY_MODES,
+  COPY_SIDES,
+  COPY_INSTRUCTION_STATUSES,
+  COPY_REPORT_STATUSES,
+  COPY_INSTRUCTION_TTL_SECONDS,
+  COPY_MIN_USD,
+  COPY_DEFAULT_SLIPPAGE_BPS,
+  type CopyMode,
+  type CopySides,
+  type CopyInstructionStatus,
+  type CopyReportStatus,
+  type CopyTrader,
+  type CopySettings,
+  type CopyTradingSetting,
+  type CopyAction,
+  type CopySourceTrade,
+  type CopyInstructionBase,
+  type CopyInstruction,
+  type CopyInstructionEvent,
 } from '../types';

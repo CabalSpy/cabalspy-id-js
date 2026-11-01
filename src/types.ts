@@ -578,7 +578,9 @@ export type WebhookEventType =
   | 'callout.created'
   | 'callout.milestone'
   | 'callout.scored'
-  | 'callout.final';
+  | 'callout.final'
+  // copy trading
+  | 'copy_trade.instruction';
 
 export interface WebhookEvent<D = Record<string, unknown>> {
   /** Event id; the same on every retry. Dedupe on it. */
@@ -728,6 +730,12 @@ export interface CalloutFinalData {
   callout: Callout;
 }
 
+/**
+ * `data` of a `copy_trade.instruction` webhook: a new copy instruction for one
+ * of your users (one per user and copied trade). Same as the stream event.
+ */
+export type CopyTradeInstructionData = CopyInstructionEvent;
+
 /** `data` of every webhook type the SDK knows the shape of. */
 export interface WebhookEventDataMap {
   'thesis.created': ThesisCreatedData;
@@ -746,6 +754,7 @@ export interface WebhookEventDataMap {
   'callout.milestone': CalloutMilestoneData;
   'callout.scored': CalloutScoredData;
   'callout.final': CalloutFinalData;
+  'copy_trade.instruction': CopyTradeInstructionData;
 }
 
 /** A webhook event of type K with its typed `data`. */
@@ -1689,4 +1698,161 @@ export interface CalloutRemoved {
   id: string;
   chain: Chain;
   mint: string;
+}
+
+// ── copy trading ────────────────────────────────────────────────────────────
+//
+// Every trade of a trader one of your users copies becomes a ready-to-execute
+// instruction for that user, sized by their copy settings. CabalSpy ID never
+// holds keys and never executes: your app executes the instruction with the
+// user's wallet and reports the status back.
+
+/** `fixed_usd`: every copied buy is `amount_usd`; `percent`: `percent` % of the trader's buy (in USD). */
+export const COPY_MODES = ['fixed_usd', 'percent'] as const;
+export type CopyMode = (typeof COPY_MODES)[number];
+
+/** `buys`: only buys are copied; `both`: sells too, as "sell X % of the copied position". */
+export const COPY_SIDES = ['buys', 'both'] as const;
+export type CopySides = (typeof COPY_SIDES)[number];
+
+/** `expired`: still pending after `expires_at` (it may still be reported executed). */
+export const COPY_INSTRUCTION_STATUSES = ['pending', 'executed', 'failed', 'skipped', 'expired'] as const;
+export type CopyInstructionStatus = (typeof COPY_INSTRUCTION_STATUSES)[number];
+
+/** The statuses your app reports back; final (the same report twice is fine). */
+export const COPY_REPORT_STATUSES = ['executed', 'failed', 'skipped'] as const;
+export type CopyReportStatus = (typeof COPY_REPORT_STATUSES)[number];
+
+/** Seconds an instruction is meant to be executed in (`expires_at` - `created_at`). */
+export const COPY_INSTRUCTION_TTL_SECONDS = 120;
+/** Copied buys below this many USD are not sent. */
+export const COPY_MIN_USD = 1;
+/** Default price limit of the instructions, in basis points (3 %). */
+export const COPY_DEFAULT_SLIPPAGE_BPS = 300;
+
+/** A copied trader as everyone may see them; a platform's own users have no `username` / `profile_url`. */
+export interface CopyTrader {
+  csid_id: string;
+  username: string | null;
+  name: string | null;
+  image_url: string | null;
+  kol: boolean;
+  profile_url: string | null;
+}
+
+/** How one user copies one trader. */
+export interface CopySettings {
+  enabled: boolean;
+  /** Default: fixed_usd */
+  mode: CopyMode;
+  /** mode fixed_usd: USD per copied buy. Default: 50 */
+  amount_usd: number;
+  /** mode percent: percent of the trader's buy, above 0 and at most 1000. Default: 100 */
+  percent: number;
+  /** Cap per copied buy in USD; null = no cap. */
+  max_usd: number | null;
+  /** Default: both */
+  sides: CopySides;
+  /** Price limit sent with every instruction, 1-5000. Default: 300 (3 %) */
+  slippage_bps: number;
+  updated_at: string | null;
+}
+
+/** `GET`/`POST /v1/copy-trading/settings`: a trader in the user's Trade Feed and the copy settings. */
+export interface CopyTradingSetting {
+  trader: CopyTrader;
+  copy: CopySettings;
+  /**
+   * true while another platform copies this trader for this user: only that
+   * platform gets the instructions, and switching it on here fails with
+   * `copy_managed_elsewhere`.
+   */
+  managed_by_other_platform: boolean;
+}
+
+/**
+ * What to execute. Buys: `amount_usd` (and `amount_native` in `currency`) with
+ * `max_price_usd` as the price limit. Sells: `sell_percent` of the copied
+ * position with `min_price_usd` as the price limit.
+ */
+export interface CopyAction {
+  blockchain: Chain;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  side: 'buy' | 'sell';
+  /** Buys only. */
+  amount_usd: number | null;
+  /** Buys only, when known: the same amount in the chain's native currency. */
+  amount_native: number | null;
+  currency: Currency | null;
+  /** Sells only: percent of the copied position to sell (100 = everything). */
+  sell_percent: number | null;
+  /** The trader's price. */
+  price_usd: number | null;
+  /** Buys: price_usd * (1 + slippage_bps / 10000). */
+  max_price_usd: number | null;
+  /** Sells: price_usd * (1 - slippage_bps / 10000). */
+  min_price_usd: number | null;
+  slippage_bps: number;
+}
+
+/** The trader's trade that was copied (as in the Trade Feed). */
+export interface CopySourceTrade {
+  blockchain: Chain;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  logo: string | null;
+  side: 'buy' | 'sell';
+  /** new, add, partial, close or sell. */
+  label: 'new' | 'add' | 'partial' | 'close' | 'sell' | (string & {});
+  /** Partial sells: percent of the position the trader sold. */
+  sold_percent: number | null;
+  amount_native: number;
+  currency: Currency | null;
+  amount_usd: number | null;
+  token_amount: number | null;
+  price_usd: number | null;
+  pnl_usd: number | null;
+  pnl_percent: number | null;
+  wallet: string;
+  wallet_url: string | null;
+  tx_signature: string;
+  tx_url: string | null;
+}
+
+/** The new, pending instruction as the webhook and the stream send it. */
+export interface CopyInstructionBase {
+  id: string;
+  type: 'copy_instruction';
+  status: CopyInstructionStatus;
+  created_at: string;
+  /** `created_at` + 120 seconds. */
+  expires_at: string;
+  /** The user to execute it for. */
+  csid_id: string;
+  trader: CopyTrader;
+  action: CopyAction;
+  source_trade: CopySourceTrade;
+  /** The copy settings when the instruction was made. */
+  settings: CopySettings;
+  links: { token: string | null; terminal: string | null; profile: string | null };
+}
+
+/**
+ * A copy instruction (REST): execute `action` with the user's wallet, then
+ * report the result with `reportCopyInstruction`.
+ */
+export interface CopyInstruction extends CopyInstructionBase {
+  tx_signature: string | null;
+  executed_amount_usd: number | null;
+  note: string | null;
+  updated_at: string;
+}
+
+/** Webhook and stream: the new instruction plus your platform's user id (white-label), else null. */
+export interface CopyInstructionEvent extends CopyInstructionBase {
+  external_id: string | null;
 }
