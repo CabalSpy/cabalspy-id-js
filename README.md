@@ -218,7 +218,7 @@ The API key is the **same key as the CabalSpy API**, with the per-key toggle "Ca
 | `profile({ username } \| { csid_id } \| { address })` | `GET /v1/profile` |
 | `walletLookup(address)` | `GET /v1/wallets/lookup` |
 | `tracker({ blockchain, address, period? })` | `GET /v1/wallets/tracker` |
-| `history({ blockchain, address, limit?, cursor? })` | `GET /v1/wallets/history` |
+| `history({ blockchain, address, limit?, cursor?, mint? })` | `GET /v1/wallets/history` |
 | `holdings({ blockchain, address })` | `GET /v1/wallets/holdings` |
 | `pnlCalendar({ blockchain, address })` | `GET /v1/wallets/pnl_calendar` |
 | `leaderboard({ blockchain, period?, sort?, limit?, cursor?, scope? })` | `GET /v1/wallets/leaderboard` |
@@ -640,15 +640,15 @@ if (can_post) {
 | `thesisReplies({ id, limit?, cursor? })` / `iterThesisReplies()` | `GET /v1/theses/replies` |
 | `latestTheses({ blockchain?, users?: 'all' \| 'instance', limit?, cursor? })` | `GET /v1/theses/latest` |
 | `userTheses({ csid_id } \| { username })` | `GET /v1/theses/user` |
-| `thesisEligibility({ blockchain, mint, csid_id })` | `GET /v1/theses/eligibility` |
-| `postThesis({ blockchain, mint, body, stance?, csid_id })` | `POST /v1/theses` |
-| `replyToThesis({ thesis_id, body, csid_id })` | `POST /v1/theses/replies` |
-| `reactToThesis({ thesis_id, emoji, on?, csid_id })` | `POST /v1/theses/reactions` |
-| `reportThesis({ thesis_id, reason, note?, csid_id })` | `POST /v1/theses/report` |
-| `deleteThesis({ thesis_id, csid_id })` | `POST /v1/theses/delete` |
+| `thesisEligibility({ blockchain, mint, csid_id \| external_id })` | `GET /v1/theses/eligibility` |
+| `postThesis({ blockchain, mint, body, stance?, csid_id \| external_id })` | `POST /v1/theses` |
+| `replyToThesis({ thesis_id, body, csid_id \| external_id })` | `POST /v1/theses/replies` |
+| `reactToThesis({ thesis_id, emoji, on?, csid_id \| external_id })` | `POST /v1/theses/reactions` |
+| `reportThesis({ thesis_id, reason, note?, csid_id \| external_id })` | `POST /v1/theses/report` |
+| `deleteThesis({ thesis_id, csid_id \| external_id })` | `POST /v1/theses/delete` |
 
-| `thesisNotifications(csidId)` | `GET /v1/theses/notifications` |
-| `appealThesisDecision(csidId, notificationId, message)` | `POST /v1/theses/appeal` |
+| `thesisNotifications(csidId \| { external_id })` | `GET /v1/theses/notifications` |
+| `appealThesisDecision(csidId \| { external_id }, notificationId, message)` | `POST /v1/theses/appeal` |
 
 Every thesis carries `reacted_by` (the latest reactions with who reacted) and, for theses, `latest_replies` (a preview of the newest replies).
 
