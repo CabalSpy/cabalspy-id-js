@@ -4,6 +4,25 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-11-08
+
+One person, one CabalSpy ID. A platform may create an account for its user, but the person
+owns it: when they prove through your platform (X, Telegram or a paid wallet) an identity
+their own CabalSpy ID holds, your link moves to that ID; when they sign in themselves, they
+manage it. Your `external_id` always stays.
+
+### Added
+
+- Webhook types `platform_user.merged` (`previous_csid_id`, `reason`, `skipped_wallets`),
+  `platform_user.self_managed` and `platform_user.telegram_linked`.
+- `PlatformUser.self_managed`, `self_managed_at` and `merged_from`.
+
+### Deprecated
+
+- `platformUserClaimLink()`: claim links are gone, the API answers 410 `claim_removed`.
+  `PlatformUser.claimed` / `claimed_at` are the old names of `self_managed` / `self_managed_at`.
+  `platform_user.claimed` is no longer sent.
+
 ## [0.9.1] - 2026-11-08
 
 ### Fixed
