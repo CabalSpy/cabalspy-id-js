@@ -1611,7 +1611,11 @@ export class CabalSpyID {
     return this.post<PlatformUserSession>('/platform-users/session', userRef(user));
   }
 
-  /** POST /v1/platform-users/claim-link — a 24-hour link to take the account into the person's own CabalSpy ID. */
+  /**
+   * @deprecated Claim links are gone (HTTP 410 `claim_removed`): a CabalSpy ID is one account
+   * for every platform now. Your link moves to the person's own ID by itself when they connect
+   * X or Telegram or verify a wallet it holds (webhook `platform_user.merged`).
+   */
   async platformUserClaimLink(params: PlatformUserId | PlatformClaimLinkParams): Promise<PlatformClaimLink> {
     const returnUrl = typeof params === 'string' ? undefined : (params as PlatformClaimLinkParams).return_url;
     return this.post<PlatformClaimLink>('/platform-users/claim-link', {

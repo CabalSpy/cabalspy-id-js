@@ -265,7 +265,7 @@ try {
 | `PlanUserLimitError` | 403 | `plan_user_limit` |
 | `FeatureNotEnabledError` | 403 | `feature_not_enabled` (an extra such as callouts is not switched on) |
 | `NotFoundError` | 404 | `profile_not_found`, `wallet_not_found`, `instance_not_found`, `platform_user_not_found`, …; copy trading: `trader_not_found`, `not_in_trade_feed`, `not_found`; Trade Feed: `trader_not_found` |
-| `ConflictError` | 409 | white-label and competitions: `account_claimed`, `last_wallet`, `competition_full`, …; callouts: `already_called`; copy trading: `copy_managed_elsewhere`, `already_reported`, `trade_feed_full`; Trade Feed: `trade_feed_full` |
+| `ConflictError` | 409 | white-label and competitions: `self_managed`, `already_linked`, `last_wallet`, `competition_full`, …; callouts: `already_called`; copy trading: `copy_managed_elsewhere`, `already_reported`, `trade_feed_full`; Trade Feed: `trade_feed_full` |
 | `UnprocessableError` | 422 | `no_price` (callouts) |
 | `RateLimitError` | 429 | `rate_limit_exceeded`, `rate_limited` (also the Trade Feed's 120 changes per hour; not retried) |
 | `CalloutCooldownError` | 429 | `callout_cooldown` (a `RateLimitError`; not retried) |
@@ -333,7 +333,7 @@ Everywhere else in the Data API, `external_id` works in place of `csid_id`. A ru
 | `platformSettings()` / `updatePlatformSettings({ white_label?, data_scope?, wallet_trust?, leaderboard_trust?, claim_links?, telegram_alerts? })` | `GET` / `POST /v1/platform-users/settings` |
 | `inboundStatus()` / `enableInbound()` / `disableInbound()` | `GET /v1/platform-users/inbound`, `POST .../inbound/enable`, `POST .../inbound/disable` |
 | `platformUserSession(externalId)` | `POST /v1/platform-users/session` (15-minute token for the verify widget) |
-| `platformUserClaimLink({ external_id, return_url? })` | `POST /v1/platform-users/claim-link` |
+| ~~`platformUserClaimLink()`~~ | removed: 410 `claim_removed` (one CabalSpy ID per person, see below) |
 | `connectPlatformUserX({ external_id, return_url })` / `disconnectPlatformUserX(externalId)` | `POST /v1/platform-users/x/connect`, `.../x/disconnect` |
 | `linkPlatformUserTelegram(externalId)` / `platformUserTelegram(externalId)` / `unlinkPlatformUserTelegram(externalId)` | `POST .../telegram/link`, `GET .../telegram`, `POST .../telegram/unlink` |
 | `platformUserKol(externalId)` / `requestPlatformUserVolumeCheck(externalId)` / `applyPlatformUserKol(externalId)` | `GET .../kol`, `POST .../kol/volume-check`, `POST .../kol/apply` |
@@ -362,7 +362,9 @@ Metrics: `pnl_usd`, `pnl`, `volume_usd`, `volume`, `trades`, `win_rate` (callout
 
 ### Webhooks and errors
 
-New webhook events: `platform_user.created`, `platform_user.claimed`, `platform_user.x_connected`, `wallet.added`, `verification.expired`, and at instance level (no `sub`) `competition.started`, `competition.updated`, `competition.standings`, `competition.ended`. `isWebhookEvent(event, type)` narrows a verified event to its typed `data`; `verifyTypedWebhook()` returns a union you can `switch` on:
+**One person, one CabalSpy ID.** You may create an account for your user, but the person owns it: when they connect X or Telegram, or verify a wallet, that their own CabalSpy ID already holds, your link moves there (`platform_user.merged` with the new `csid_id`; your `external_id` stays), and once they sign in themselves they manage profile, X and Telegram (`platform_user.self_managed`, `self_managed: true`). Wallets you report stay yours: other platforms do not see them.
+
+New webhook events: `platform_user.created`, `platform_user.merged`, `platform_user.self_managed`, `platform_user.x_connected`, `platform_user.telegram_linked`, `wallet.added`, `verification.expired`, and at instance level (no `sub`) `competition.started`, `competition.updated`, `competition.standings`, `competition.ended`. `isWebhookEvent(event, type)` narrows a verified event to its typed `data`; `verifyTypedWebhook()` returns a union you can `switch` on:
 
 ```ts
 import { isWebhookEvent, verifyWebhook } from 'cabalspy-id';

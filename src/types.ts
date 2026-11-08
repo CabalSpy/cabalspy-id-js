@@ -572,8 +572,11 @@ export type WebhookEventType =
   | 'webhook.test'
   // white-label (platform users) and trading competitions
   | 'platform_user.created'
+  | 'platform_user.merged'
+  | 'platform_user.self_managed'
   | 'platform_user.claimed'
   | 'platform_user.x_connected'
+  | 'platform_user.telegram_linked'
   | 'wallet.added'
   | 'verification.expired'
   | 'competition.started'
@@ -643,7 +646,31 @@ export interface PlatformUserCreatedData extends PlatformUserWebhookRef {
   wallets: { address: string; family: WalletFamily; chains: Chain[] }[];
 }
 
-/** `data` of a `platform_user.claimed` webhook: the person took their account into their own CabalSpy ID. */
+/**
+ * `data` of a `platform_user.merged` webhook: your user proved (X, Telegram or a paid wallet)
+ * an identity their own CabalSpy ID already holds, so your link moved there. One person,
+ * one CabalSpy ID: their `csid_id` changes to `sub`, your `external_id` stays.
+ */
+export interface PlatformUserMergedData extends PlatformUserWebhookRef {
+  sub: string;
+  previous_csid_id: string;
+  reason: 'x_connected' | 'telegram_linked' | 'wallet_verified';
+  /** Your reported wallets that did not fit the person's wallet limit (5 Solana, 5 EVM). */
+  skipped_wallets: { address: string; family: WalletFamily }[];
+}
+
+/** `data` of a `platform_user.self_managed` webhook: the person signed in themselves and manages the account now. */
+export interface PlatformUserSelfManagedData extends PlatformUserWebhookRef {
+  sub: string;
+}
+
+/** `data` of a `platform_user.telegram_linked` webhook. */
+export interface PlatformUserTelegramLinkedData extends PlatformUserWebhookRef {
+  sub: string;
+  telegram: { username: string | null };
+}
+
+/** @deprecated Claim links are gone since 0.10.0 (one CabalSpy ID per person); see `platform_user.merged`. */
 export interface PlatformUserClaimedData extends PlatformUserWebhookRef {
   /** The person's own CabalSpy ID; their csid_id changes to this. */
   sub: string;
@@ -761,8 +788,11 @@ export interface WebhookEventDataMap {
   'thesis.reply': ThesisReplyData;
   'thesis.reaction': ThesisReactionData;
   'platform_user.created': PlatformUserCreatedData;
+  'platform_user.merged': PlatformUserMergedData;
+  'platform_user.self_managed': PlatformUserSelfManagedData;
   'platform_user.claimed': PlatformUserClaimedData;
   'platform_user.x_connected': PlatformUserXConnectedData;
+  'platform_user.telegram_linked': PlatformUserTelegramLinkedData;
   'wallet.added': WalletAddedData;
   'verification.expired': VerificationExpiredData;
   'competition.started': CompetitionStartedData;
@@ -890,10 +920,20 @@ export interface WalletVerification {
 export interface PlatformUser {
   csid_id: string;
   external_id: string;
-  /** The person took the account into their own CabalSpy ID: they manage it themselves now. */
+  /**
+   * The person signs in to their CabalSpy ID themselves and manages profile, X and Telegram;
+   * you can still report wallets for them.
+   */
+  self_managed: boolean;
+  self_managed_at: string | null;
+  /** @deprecated old name of `self_managed` */
   claimed: boolean;
+  /** @deprecated old name of `self_managed_at` */
   claimed_at: string | null;
+  /** Created by a platform and not taken over by the person yet. */
   managed: boolean;
+  /** The platform account this link moved from when the person proved their own CabalSpy ID. */
+  merged_from: string | null;
   display_name: string | null;
   avatar_url: string | null;
   /** Beyond the plan's user limit: no data until the platform upgrades. */
