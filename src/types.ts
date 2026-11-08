@@ -291,6 +291,10 @@ export interface HistoryTrade {
   value: number;
   value_usd: number;
   currency: Currency;
+  /** Tokens bought or sold. */
+  token_amount: number | null;
+  /** USD price per token at the trade (value_usd / token_amount). */
+  price_usd: number | null;
   created_at: string;
 }
 

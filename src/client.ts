@@ -222,6 +222,8 @@ export interface HistoryParams extends WalletParams {
   /** 1-1000. Default: 500 */
   limit?: number;
   cursor?: string;
+  /** Only the trades of this token (stats then cover this token only). */
+  mint?: string;
 }
 
 export interface LeaderboardParams extends ScopedParams {
@@ -298,40 +300,39 @@ export type UserThesesParams = { limit?: number; cursor?: string } & (
 
 /**
  * Writes happen in the name of one of your users: `csid_id` is the `sub` of
- * their ID token. They must have signed in to your app with the scope
- * `thesis` and be within your plan's user limit.
+ * their ID token (they signed in to your app with the scope `thesis` and are
+ * within your plan's user limit), or `external_id` for a platform user
+ * (white-label).
  */
-export interface ThesisWriter {
-  csid_id: string;
-}
+export type ThesisWriter = PlatformUserRef;
 
-export interface PostThesisParams extends ThesisTokenParams, ThesisWriter {
+export type PostThesisParams = ThesisTokenParams & ThesisWriter & {
   /** Up to 1000 characters. Only holders of the token can post. */
   body: string;
   stance?: ThesisStance;
-}
+};
 
-export interface ReplyToThesisParams extends ThesisWriter {
+export type ReplyToThesisParams = ThesisWriter & {
   thesis_id: string;
   body: string;
-}
+};
 
-export interface ReactToThesisParams extends ThesisWriter {
+export type ReactToThesisParams = ThesisWriter & {
   thesis_id: string;
   emoji: ThesisEmoji;
   /** false removes the reaction. Default: true */
   on?: boolean;
-}
+};
 
-export interface ReportThesisParams extends ThesisWriter {
+export type ReportThesisParams = ThesisWriter & {
   thesis_id: string;
   reason: ThesisReportReason;
   note?: string;
-}
+};
 
-export interface DeleteThesisParams extends ThesisWriter {
+export type DeleteThesisParams = ThesisWriter & {
   thesis_id: string;
-}
+};
 
 // -- white-label: platform users ----------------------------------------------
 
@@ -704,6 +705,11 @@ function userRef(ref: PlatformUserId | undefined): { external_id: string } | { c
     });
   }
   return r.external_id ? { external_id: r.external_id } : { csid_id: r.csid_id! };
+}
+
+/** A thesis writer: a plain string is a `csid_id` (as before 0.9.1), or `{ csid_id }` / `{ external_id }`. */
+function writerRef(user: string | PlatformUserRef): { external_id: string } | { csid_id: string } {
+  return userRef(typeof user === 'string' ? { csid_id: user } : user);
 }
 
 /** Splits a params object into the user reference and the rest. */
@@ -1256,7 +1262,7 @@ export class CabalSpyID {
    */
   async thesisEligibility(params: ThesisTokenParams & ThesisWriter): Promise<ThesisEligibility> {
     assertToken(params);
-    assertRequired(params.csid_id, 'csid_id');
+    userRef(params);
     return this.get<ThesisEligibility>('/theses/eligibility', { ...params });
   }
 
@@ -1266,7 +1272,7 @@ export class CabalSpyID {
   async postThesis(params: PostThesisParams): Promise<Thesis> {
     assertToken(params);
     assertRequired(params.body, 'body');
-    assertRequired(params.csid_id, 'csid_id');
+    userRef(params);
     assertOneOf(params.stance, ['bull', 'bear'], 'stance');
     return this.post<Thesis>('/theses', { ...params });
   }
@@ -1275,7 +1281,7 @@ export class CabalSpyID {
   async replyToThesis(params: ReplyToThesisParams): Promise<Thesis> {
     assertRequired(params.thesis_id, 'thesis_id');
     assertRequired(params.body, 'body');
-    assertRequired(params.csid_id, 'csid_id');
+    userRef(params);
     return this.post<Thesis>('/theses/replies', { ...params });
   }
 
@@ -1283,7 +1289,7 @@ export class CabalSpyID {
   async reactToThesis(params: ReactToThesisParams): Promise<ThesisReactions> {
     assertRequired(params.thesis_id, 'thesis_id');
     assertOneOf(params.emoji, THESIS_EMOJIS, 'emoji');
-    assertRequired(params.csid_id, 'csid_id');
+    userRef(params);
     return this.post<ThesisReactions>('/theses/reactions', { ...params, on: params.on ?? true });
   }
 
@@ -1291,7 +1297,7 @@ export class CabalSpyID {
   async reportThesis(params: ReportThesisParams): Promise<{ reported: true }> {
     assertRequired(params.thesis_id, 'thesis_id');
     assertOneOf(params.reason, THESIS_REPORT_REASONS, 'reason');
-    assertRequired(params.csid_id, 'csid_id');
+    userRef(params);
     return this.post<{ reported: true }>('/theses/report', { ...params });
   }
 
@@ -1299,26 +1305,25 @@ export class CabalSpyID {
    * GET /v1/theses/notifications — moderation notifications of one of your users
    * (warnings, hidden posts, pauses, appeal results), with the unread count.
    */
-  async thesisNotifications(csidId: string): Promise<ThesisNotifications> {
-    assertRequired(csidId, 'csid_id');
-    return this.get<ThesisNotifications>('/theses/notifications', { csid_id: csidId });
+  async thesisNotifications(user: string | PlatformUserRef): Promise<ThesisNotifications> {
+    return this.get<ThesisNotifications>('/theses/notifications', writerRef(user));
   }
 
   /**
    * POST /v1/theses/appeal — appeals a moderation decision in the user's name
    * (an `appealable` notification, within 30 days; message 10-1000 characters).
    */
-  async appealThesisDecision(csidId: string, notificationId: number, message: string): Promise<{ appealed: true }> {
-    assertRequired(csidId, 'csid_id');
+  async appealThesisDecision(user: string | PlatformUserRef, notificationId: number, message: string): Promise<{ appealed: true }> {
+    const ref = writerRef(user);
     assertRequired(notificationId, 'notification_id');
     assertRequired(message, 'message');
-    return this.post<{ appealed: true }>('/theses/appeal', { csid_id: csidId, notification_id: notificationId, message });
+    return this.post<{ appealed: true }>('/theses/appeal', { ...ref, notification_id: notificationId, message });
   }
 
   /** POST /v1/theses/delete — deletes the user's own thesis or reply. */
   async deleteThesis(params: DeleteThesisParams): Promise<{ deleted: true }> {
     assertRequired(params.thesis_id, 'thesis_id');
-    assertRequired(params.csid_id, 'csid_id');
+    userRef(params);
     return this.post<{ deleted: true }>('/theses/delete', { ...params });
   }
 

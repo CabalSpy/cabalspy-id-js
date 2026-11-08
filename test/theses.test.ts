@@ -102,6 +102,31 @@ describe('Data API: theses', () => {
     expect(calls[0]!.headers['content-type']).toBe('application/json');
   });
 
+  it('writes and reads in the name of a platform user (external_id)', async () => {
+    const { csid, calls } = client((req) => {
+      if (req.url.includes('/reactions')) return ok({ id: 't1', reactions: { like: 1 } });
+      if (req.url.includes('/eligibility')) return ok({ can_post: true, can_reply: true, holder: true, paused: false });
+      if (req.url.includes('/notifications')) return ok({ unread: 0, items: [] });
+      return ok(thesis());
+    });
+    await csid.thesisEligibility({ blockchain: 'solana', mint: MINT, external_id: 'user_1' });
+    await csid.postThesis({ blockchain: 'solana', mint: MINT, body: 'gm', external_id: 'user_1' });
+    await csid.replyToThesis({ thesis_id: 't1', body: 'Nice call', external_id: 'user_2' });
+    await csid.reactToThesis({ thesis_id: 't1', emoji: 'like', external_id: 'user_2' });
+    await csid.thesisNotifications({ external_id: 'user_1' });
+    await csid.thesisNotifications(USER);
+    expect(calls.map((c) => [c.method, pathAndQuery(c.url), c.body ? JSON.parse(c.body) : null])).toEqual([
+      ['GET', `/v1/theses/eligibility?blockchain=solana&mint=${MINT}&external_id=user_1`, null],
+      ['POST', '/v1/theses?', { blockchain: 'solana', mint: MINT, body: 'gm', external_id: 'user_1' }],
+      ['POST', '/v1/theses/replies?', { thesis_id: 't1', body: 'Nice call', external_id: 'user_2' }],
+      ['POST', '/v1/theses/reactions?', { thesis_id: 't1', emoji: 'like', on: true, external_id: 'user_2' }],
+      ['GET', '/v1/theses/notifications?external_id=user_1', null],
+      ['GET', `/v1/theses/notifications?csid_id=${USER}`, null],
+    ]);
+    // @ts-expect-error both identifiers
+    await expect(csid.postThesis({ blockchain: 'solana', mint: MINT, body: 'x', csid_id: USER, external_id: 'u' })).rejects.toBeInstanceOf(BadRequestError);
+  });
+
   it('validates before sending', async () => {
     const { csid, calls } = client(() => ok({}));
     await expect(csid.listTheses({ blockchain: 'solana', mint: '' })).rejects.toMatchObject({ parameter: 'mint' });
@@ -112,7 +137,7 @@ describe('Data API: theses', () => {
     // @ts-expect-error bad reason
     await expect(csid.reportThesis({ thesis_id: 't', reason: 'meh', csid_id: USER })).rejects.toMatchObject({ parameter: 'reason' });
     // @ts-expect-error no writer
-    await expect(csid.postThesis({ blockchain: 'solana', mint: MINT, body: 'x' })).rejects.toMatchObject({ parameter: 'csid_id' });
+    await expect(csid.postThesis({ blockchain: 'solana', mint: MINT, body: 'x' })).rejects.toMatchObject({ parameter: 'external_id|csid_id' });
     // @ts-expect-error both identifiers
     await expect(csid.userTheses({ csid_id: USER, username: 'a' })).rejects.toBeInstanceOf(BadRequestError);
     expect(calls).toHaveLength(0);
